@@ -339,9 +339,11 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 #terminal-container {
   position: absolute;
   top: 0; left: 0;
-  width: 100%; height: 100%;
+  width: 0; height: 0;
   z-index: 2;
   pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .terminal-box {

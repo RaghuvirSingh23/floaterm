@@ -162,8 +162,7 @@ export class InputHandler {
       );
       this.dragBox.x = world.x;
       this.dragBox.y = world.y;
-      // Use transform for position — single GPU-composited property
-      this.tm.updatePosition(this.dragBox, this.canvas);
+      this.tm.updatePosition(this.dragBox);
       this._scheduleRender();
       return;
     }
@@ -188,7 +187,7 @@ export class InputHandler {
         this.resizeBox.h = newH;
       }
 
-      this.tm.updatePosition(this.resizeBox, this.canvas);
+      this.tm.updatePosition(this.resizeBox);
       // Don't fit during resize — only on mouseup (avoids per-frame reflow)
       this._scheduleRender();
       return;
@@ -200,7 +199,7 @@ export class InputHandler {
       this.panStart.x = e.clientX;
       this.panStart.y = e.clientY;
       this.canvas.pan(dx, dy);
-      this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
+      this.tm.updateCamera(this.canvas);
       this._scheduleRender();
     }
   }
@@ -228,11 +227,9 @@ export class InputHandler {
     }
 
     if (this.mode === 'resizing' && this.resizeBox) {
-      // Fit terminal only on mouseup — one reflow instead of per-frame
-      if (this.resizeBox._fitAddon && this.resizeBox.domEl) {
-        this.resizeBox.domEl.style.transform = '';
+      // Fit terminal on mouseup (reflow cols/rows to new size)
+      if (this.resizeBox._fitAddon) {
         try { this.resizeBox._fitAddon.fit(); } catch {}
-        this.resizeBox.domEl.style.transform = `scale(${this.canvas.scale})`;
       }
     }
 
@@ -253,7 +250,7 @@ export class InputHandler {
     } else {
       this.canvas.pan(-e.deltaX, -e.deltaY);
     }
-    this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
+    this.tm.updateCamera(this.canvas);
     this._scheduleRender();
   }
 }

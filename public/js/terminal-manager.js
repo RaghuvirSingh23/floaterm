@@ -2,6 +2,7 @@ export class TerminalManager {
   constructor(containerEl) {
     this.container = containerEl;
     this._loaded = false;
+    this._scale = 1;
     this.Terminal = null;
     this.WebglAddon = null;
     this.FitAddon = null;
@@ -69,8 +70,10 @@ export class TerminalManager {
       if (e.key === 'Enter') { e.preventDefault(); labelText.blur(); }
     });
 
-    // Position the DOM element
-    this.updatePosition(box, canvas);
+    // Position in world space (container handles camera transform)
+    el.style.transform = `translate(${box.x}px, ${box.y}px)`;
+    el.style.width = box.w + 'px';
+    el.style.height = box.h + 'px';
 
     // Create xterm instance
     const term = new this.Terminal({
@@ -98,22 +101,18 @@ export class TerminalManager {
       console.warn('WebGL addon failed, falling back to canvas renderer');
     }
 
-    // Fit at world-space size (temporarily remove scale so fit calculates correct cols/rows)
-    const screen = canvas.worldToScreen(box.x, box.y);
-    el.style.transform = `translate(${screen.x}px, ${screen.y}px)`;
+    // Fit terminal to world-space dimensions (container scale handles zoom)
     fitAddon.fit();
-    el.style.transform = `translate(${screen.x}px, ${screen.y}px) scale(${canvas.scale})`;
 
     // Fix mouse coords for text selection under transform: scale().
     // xterm maps mouse position using the scaled bounding rect but its cell grid
     // is unscaled, so we adjust event coords to unscaled space.
-    // Cache scale on box for mouse adjustment (avoid parsing transform string)
-    box._cachedScale = canvas.scale;
-
+    // Mouse coordinate adjustment for text selection under container scale
+    const tm = this;
     const screenEl = termContent.querySelector('.xterm-screen');
     if (screenEl) {
       const adjustMouse = (e) => {
-        const s = box._cachedScale || 1;
+        const s = tm._scale || 1;
         if (s === 1) return;
         const rect = screenEl.getBoundingClientRect();
         const adjX = rect.left + (e.clientX - rect.left) / s;
@@ -171,20 +170,27 @@ export class TerminalManager {
     return { el };
   }
 
-  updatePosition(box, canvas) {
+  // Position a single box in world space (container handles camera transform)
+  updatePosition(box) {
     if (!box.domEl) return;
-    const screen = canvas.worldToScreen(box.x, box.y);
     const el = box.domEl;
-    // Single transform for position + scale — GPU composited, no layout thrashing
-    el.style.transform = `translate(${screen.x}px, ${screen.y}px) scale(${canvas.scale})`;
+    el.style.transform = `translate(${box.x}px, ${box.y}px)`;
     el.style.width = box.w + 'px';
     el.style.height = box.h + 'px';
-    box._cachedScale = canvas.scale;
   }
 
+  // Apply camera transform to the container — ONE DOM write for all terminals
+  updateCamera(canvas) {
+    this.container.style.transform =
+      `translate(${canvas.offsetX}px, ${canvas.offsetY}px) scale(${canvas.scale})`;
+    this._scale = canvas.scale;
+  }
+
+  // Update camera + reposition all boxes (used after restore)
   updateAllPositions(boxes, canvas) {
+    this.updateCamera(canvas);
     for (let i = 0; i < boxes.length; i++) {
-      this.updatePosition(boxes[i], canvas);
+      this.updatePosition(boxes[i]);
     }
   }
 
