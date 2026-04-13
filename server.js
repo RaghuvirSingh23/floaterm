@@ -90,7 +90,6 @@ const MIME = {
   '.html': 'text/html',
   '.js': 'application/javascript',
   '.css': 'text/css',
-  '.json': 'application/json',
 };
 
 const server = http.createServer((req, res) => {

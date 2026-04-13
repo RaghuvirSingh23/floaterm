@@ -16,6 +16,7 @@ export class InputHandler {
     this.dragBox = null;
     this.resizeBox = null;
     this.resizeStart = null;
+    this.resizeDir = null;
     this.panStart = null;
 
     this._bind();
@@ -87,7 +88,8 @@ export class InputHandler {
       e.preventDefault();
       this.mode = 'resizing';
       this.resizeBox = box;
-      this.resizeStart = { mx: e.clientX, my: e.clientY, w: box.w, h: box.h };
+      this.resizeDir = e.target.dataset.dir || 'se';
+      this.resizeStart = { mx: e.clientX, my: e.clientY, x: box.x, y: box.y, w: box.w, h: box.h };
       return;
     }
 
@@ -157,8 +159,27 @@ export class InputHandler {
     if (this.mode === 'resizing' && this.resizeBox) {
       const dx = (e.clientX - this.resizeStart.mx) / this.canvas.scale;
       const dy = (e.clientY - this.resizeStart.my) / this.canvas.scale;
-      this.resizeBox.w = Math.max(300, this.resizeStart.w + dx);
-      this.resizeBox.h = Math.max(200, this.resizeStart.h + dy);
+      const dir = this.resizeDir;
+      const s = this.resizeStart;
+      const MIN_W = 300, MIN_H = 200;
+
+      if (dir.includes('e')) {
+        this.resizeBox.w = Math.max(MIN_W, s.w + dx);
+      }
+      if (dir.includes('w')) {
+        const newW = Math.max(MIN_W, s.w - dx);
+        this.resizeBox.x = s.x + (s.w - newW);
+        this.resizeBox.w = newW;
+      }
+      if (dir.includes('s')) {
+        this.resizeBox.h = Math.max(MIN_H, s.h + dy);
+      }
+      if (dir.includes('n')) {
+        const newH = Math.max(MIN_H, s.h - dy);
+        this.resizeBox.y = s.y + (s.h - newH);
+        this.resizeBox.h = newH;
+      }
+
       this.tm.updatePosition(this.resizeBox, this.canvas);
       if (this.resizeBox._fitAddon) {
         try { this.resizeBox._fitAddon.fit(); } catch {}
@@ -216,14 +237,12 @@ export class InputHandler {
   _onWheel(e) {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
-      // Zoom
       const factor = e.deltaY > 0 ? 0.97 : 1.03;
       this.canvas.zoom(factor, e.clientX, e.clientY);
-      this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
     } else {
-      // Pan
       this.canvas.pan(-e.deltaX, -e.deltaY);
-      this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
     }
+    this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
+    this.onRender();
   }
 }

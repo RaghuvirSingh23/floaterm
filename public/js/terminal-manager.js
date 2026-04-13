@@ -46,12 +46,17 @@ export class TerminalManager {
     const termContent = document.createElement('div');
     termContent.className = 'term-content';
 
-    const resizeHandle = document.createElement('div');
-    resizeHandle.className = 'resize-handle';
-
     el.appendChild(labelBar);
     el.appendChild(termContent);
-    el.appendChild(resizeHandle);
+
+    // Resize handles: 4 edges + 4 corners
+    const edges = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+    for (const dir of edges) {
+      const handle = document.createElement('div');
+      handle.className = `resize-handle rh-${dir}`;
+      handle.dataset.dir = dir;
+      el.appendChild(handle);
+    }
     this.container.appendChild(el);
 
     box.domEl = el;
@@ -122,7 +127,7 @@ export class TerminalManager {
 
     box.ws = ws;
 
-    return { el, term, labelBar, resizeHandle };
+    return { el };
   }
 
   updatePosition(box, canvas) {
