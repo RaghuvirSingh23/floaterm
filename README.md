@@ -1,6 +1,6 @@
 # floaterm
 
-Draw terminals on an infinite canvas.
+Draw (persistent) terminals on an infinite canvas.
 
 ![floaterm](assets/screenshot.png)
 
