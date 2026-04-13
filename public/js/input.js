@@ -103,6 +103,7 @@ export class InputHandler {
       this.resizeDir = e.target.dataset.dir || 'se';
       const mouseWorld = this.canvas.screenToWorld(e.clientX, e.clientY);
       this.resizeStart = { wx: mouseWorld.x, wy: mouseWorld.y, x: box.x, y: box.y, w: box.w, h: box.h };
+      this._disableTermPointerEvents();
       return;
     }
 
@@ -110,10 +111,10 @@ export class InputHandler {
       e.preventDefault();
       this.mode = 'dragging';
       this.dragBox = box;
-      this._dragLogCount = 0;
       const mouseWorld = this.canvas.screenToWorld(e.clientX, e.clientY);
       this.dragOffset = { x: mouseWorld.x - box.x, y: mouseWorld.y - box.y };
-      console.log(`[drag START] mouse=(${e.clientX},${e.clientY}) mouseWorld=(${mouseWorld.x.toFixed(1)},${mouseWorld.y.toFixed(1)}) box=(${box.x.toFixed(1)},${box.y.toFixed(1)}) offset=(${this.dragOffset.x.toFixed(1)},${this.dragOffset.y.toFixed(1)}) scale=${this.canvas.scale}`);
+      // Block xterm from processing mouse events during drag (kills GPU thrashing)
+      this._disableTermPointerEvents();
       return;
     }
   }
@@ -189,7 +190,6 @@ export class InputHandler {
       }
 
       this.tm.updatePosition(this.resizeBox);
-      // NO canvas redraw during resize — only the box changes
       return;
     }
 
@@ -244,9 +244,26 @@ export class InputHandler {
       this.canvasEl.classList.remove('grabbing');
     }
 
+    // Re-enable terminal pointer events
+    if (this.mode === 'dragging' || this.mode === 'resizing') {
+      this._enableTermPointerEvents();
+    }
+
     this.mode = 'idle';
     this.dragBox = null;
     this.resizeBox = null;
+  }
+
+  _disableTermPointerEvents() {
+    document.querySelectorAll('.term-content').forEach(el => {
+      el.style.pointerEvents = 'none';
+    });
+  }
+
+  _enableTermPointerEvents() {
+    document.querySelectorAll('.term-content').forEach(el => {
+      el.style.pointerEvents = '';
+    });
   }
 
   _onWheel(e) {
