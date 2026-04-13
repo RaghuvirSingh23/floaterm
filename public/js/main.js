@@ -114,20 +114,20 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#quick-spawn-wrapper')) qsMenu.classList.add('hidden');
 });
 
-// Tool items (Claude, Codex, Terminal)
-qsMenu.querySelectorAll('.qs-item[data-cmd]').forEach(item => {
-  item.addEventListener('click', () => {
-    const cmd = item.dataset.cmd;
-    const label = item.dataset.label;
-    if (cmd === 'claude') spawnWithCommand('claude', 'claude');
-    else if (cmd === 'codex') spawnWithCommand('codex', 'codex');
-    else if (cmd === 'shell') spawnInCenter();
-    qsMenu.classList.add('hidden');
-  });
-});
-
 // SSH hosts
 let sshHostsLoaded = false;
+
+function addHostItem(host, container) {
+  const item = document.createElement('div');
+  item.className = 'qs-item';
+  item.innerHTML = `<span class="qs-icon">&#8594;</span> ${host}`;
+  item.addEventListener('click', () => {
+    spawnWithCommand(`ssh:${host}`, `ssh ${host}`);
+    qsMenu.classList.add('hidden');
+  });
+  container.appendChild(item);
+}
+
 async function loadSshHosts() {
   if (sshHostsLoaded) return;
   try {
@@ -135,57 +135,34 @@ async function loadSshHosts() {
     const hosts = await res.json();
     qsSshHosts.innerHTML = '';
 
-    if (hosts.config.length === 0 && hosts.knownHosts.length === 0) {
+    if (hosts.length === 0) {
       qsSshHosts.innerHTML = '<span class="qs-empty">No SSH hosts found</span>';
-      sshHostsLoaded = true;
-      return;
+    } else {
+      hosts.forEach(h => addHostItem(h, qsSshHosts));
     }
-
-    // Config hosts first (named, cleaner)
-    for (const host of hosts.config) {
-      const item = document.createElement('div');
-      item.className = 'qs-item';
-      item.innerHTML = `<span class="qs-icon">&#8594;</span> ${host}`;
-      item.addEventListener('click', () => {
-        spawnWithCommand(`ssh:${host}`, `ssh ${host}`);
-        qsMenu.classList.add('hidden');
-      });
-      qsSshHosts.appendChild(item);
-    }
-
-    // Known hosts (IPs) — show first 10 with a label separator
-    if (hosts.knownHosts.length > 0 && hosts.config.length > 0) {
-      const sep = document.createElement('div');
-      sep.className = 'qs-section-label';
-      sep.textContent = 'Known Hosts';
-      sep.style.marginTop = '4px';
-      qsSshHosts.appendChild(sep);
-    }
-
-    const knownSlice = hosts.knownHosts.slice(0, 15);
-    for (const host of knownSlice) {
-      const item = document.createElement('div');
-      item.className = 'qs-item';
-      item.innerHTML = `<span class="qs-icon">&#8594;</span> ${host}`;
-      item.addEventListener('click', () => {
-        spawnWithCommand(`ssh:${host}`, `ssh ${host}`);
-        qsMenu.classList.add('hidden');
-      });
-      qsSshHosts.appendChild(item);
-    }
-
-    if (hosts.knownHosts.length > 15) {
-      const more = document.createElement('span');
-      more.className = 'qs-empty';
-      more.textContent = `+${hosts.knownHosts.length - 15} more`;
-      qsSshHosts.appendChild(more);
-    }
-
     sshHostsLoaded = true;
   } catch {
     qsSshHosts.innerHTML = '<span class="qs-empty">Failed to load hosts</span>';
   }
 }
+
+document.getElementById('qs-claude').addEventListener('click', () => {
+  spawnWithCommand('claude', 'claude');
+  qsMenu.classList.add('hidden');
+});
+document.getElementById('qs-codex').addEventListener('click', () => {
+  spawnWithCommand('codex', 'codex');
+  qsMenu.classList.add('hidden');
+});
+
+document.getElementById('qs-add-host').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const host = prompt('Enter SSH host (e.g. user@hostname or IP):');
+  if (host && host.trim()) {
+    spawnWithCommand(`ssh:${host.trim()}`, `ssh ${host.trim()}`);
+    qsMenu.classList.add('hidden');
+  }
+});
 
 // ── Terminal list dropdown ───────────────────────────────────────────
 const listToggle = document.getElementById('terminal-list-toggle');
