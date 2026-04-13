@@ -346,6 +346,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
 
 .terminal-box {
   position: absolute;
+  left: 0;
+  top: 0;
   pointer-events: auto;
   border: 2px solid #4a4a6a;
   border-radius: 6px;
@@ -353,6 +355,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg);
   background: #0f0f23;
   display: flex;
   flex-direction: column;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .terminal-box.focused {

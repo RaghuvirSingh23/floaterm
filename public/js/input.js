@@ -6,10 +6,10 @@ export class InputHandler {
     this.canvas = canvas;
     this.boxStore = boxStore;
     this.tm = terminalManager;
-    this.onRender = onRender;
+    this._onRender = onRender;
 
-    this.tool = 'draw'; // 'draw' | 'hand'
-    this.mode = 'idle'; // idle | drawing | dragging | resizing | panning
+    this.tool = 'draw';
+    this.mode = 'idle';
     this.drawStart = null;
     this.drawPreview = null;
     this.dragOffset = null;
@@ -19,14 +19,32 @@ export class InputHandler {
     this.resizeDir = null;
     this.panStart = null;
 
+    // RAF batching — coalesce all renders to next animation frame
+    this._rafPending = false;
+
+    // Cached DOM references
+    this._toolBtns = null;
+
     this._bind();
     this._bindToolbar();
   }
 
+  _scheduleRender() {
+    if (this._rafPending) return;
+    this._rafPending = true;
+    requestAnimationFrame(() => {
+      this._rafPending = false;
+      this._onRender();
+    });
+  }
+
   setTool(tool) {
     this.tool = tool;
-    document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
-    document.getElementById(`tool-${tool}`).classList.add('active');
+    if (!this._toolBtns) {
+      this._toolBtns = Array.from(document.querySelectorAll('.tool-btn'));
+    }
+    this._toolBtns.forEach(btn => btn.classList.remove('active'));
+    document.getElementById(`tool-${tool}`)?.classList.add('active');
     this.canvasEl.classList.toggle('hand-mode', tool === 'hand');
   }
 
@@ -34,9 +52,7 @@ export class InputHandler {
     document.getElementById('tool-draw').addEventListener('click', () => this.setTool('draw'));
     document.getElementById('tool-hand').addEventListener('click', () => this.setTool('hand'));
 
-    // Keyboard shortcuts
     window.addEventListener('keydown', (e) => {
-      // Don't intercept when typing in a terminal or label
       if (e.target.closest('.term-content') || e.target.closest('.label-text') ||
           e.target.closest('.xterm')) return;
       if (e.key === 'd' || e.key === 'D') this.setTool('draw');
@@ -51,7 +67,6 @@ export class InputHandler {
     window.addEventListener('mouseup', (e) => this._onMouseUp(e));
     el.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
 
-    // Terminal container events (drag, resize, focus, close)
     document.getElementById('terminal-container').addEventListener('mousedown', (e) => {
       this._onTerminalContainerMouseDown(e);
     });
@@ -65,25 +80,22 @@ export class InputHandler {
     const box = this.boxStore.get(boxId);
     if (!box) return;
 
-    // Focus this terminal and bring to front
+    // Focus + bring to front
     this.boxStore.focusBox(boxId);
     document.querySelectorAll('.terminal-box').forEach(el => {
       el.classList.toggle('focused', el === boxEl);
     });
-    // Move to end of DOM so it renders on top of siblings
     boxEl.parentElement.appendChild(boxEl);
     if (box.terminal) box.terminal.focus();
-    this.onRender();
+    this._scheduleRender();
 
-    // Close button
     if (e.target.classList.contains('close-btn')) {
       this.tm.destroy(box);
       this.boxStore.remove(boxId);
-      this.onRender();
+      this._scheduleRender();
       return;
     }
 
-    // Resize handle
     if (e.target.classList.contains('resize-handle')) {
       e.preventDefault();
       this.mode = 'resizing';
@@ -93,7 +105,6 @@ export class InputHandler {
       return;
     }
 
-    // Label bar drag (but not the editable text itself)
     if (e.target.closest('.label-bar') && !e.target.classList.contains('label-text')) {
       e.preventDefault();
       this.mode = 'dragging';
@@ -105,7 +116,6 @@ export class InputHandler {
   }
 
   _onCanvasMouseDown(e) {
-    // Middle mouse or Alt+left always pans regardless of tool
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       this.mode = 'panning';
       this.panStart = { x: e.clientX, y: e.clientY };
@@ -115,34 +125,34 @@ export class InputHandler {
     }
 
     if (e.button === 0) {
-      // Unfocus all terminals
       this.boxStore.focusBox(-1);
       document.querySelectorAll('.terminal-box').forEach(el => el.classList.remove('focused'));
 
       if (this.tool === 'hand') {
-        // Hand tool: pan
         this.mode = 'panning';
         this.panStart = { x: e.clientX, y: e.clientY };
         this.canvasEl.classList.add('grabbing');
         e.preventDefault();
       } else {
-        // Draw tool: draw a new terminal box
         this.mode = 'drawing';
         this.drawStart = { x: e.clientX, y: e.clientY };
         this.drawPreview = null;
       }
-      this.onRender();
+      this._scheduleRender();
     }
   }
 
   _onMouseMove(e) {
+    if (this.mode === 'idle') return; // early exit — most common case
+
     if (this.mode === 'drawing' && this.drawStart) {
       const x = Math.min(this.drawStart.x, e.clientX);
       const y = Math.min(this.drawStart.y, e.clientY);
       const w = Math.abs(e.clientX - this.drawStart.x);
       const h = Math.abs(e.clientY - this.drawStart.y);
       this.drawPreview = { x, y, w, h };
-      this.onRender();
+      this._scheduleRender();
+      return;
     }
 
     if (this.mode === 'dragging' && this.dragBox) {
@@ -152,8 +162,10 @@ export class InputHandler {
       );
       this.dragBox.x = world.x;
       this.dragBox.y = world.y;
+      // Use transform for position — single GPU-composited property
       this.tm.updatePosition(this.dragBox, this.canvas);
-      this.onRender();
+      this._scheduleRender();
+      return;
     }
 
     if (this.mode === 'resizing' && this.resizeBox) {
@@ -163,17 +175,13 @@ export class InputHandler {
       const s = this.resizeStart;
       const MIN_W = 300, MIN_H = 200;
 
-      if (dir.includes('e')) {
-        this.resizeBox.w = Math.max(MIN_W, s.w + dx);
-      }
+      if (dir.includes('e')) this.resizeBox.w = Math.max(MIN_W, s.w + dx);
       if (dir.includes('w')) {
         const newW = Math.max(MIN_W, s.w - dx);
         this.resizeBox.x = s.x + (s.w - newW);
         this.resizeBox.w = newW;
       }
-      if (dir.includes('s')) {
-        this.resizeBox.h = Math.max(MIN_H, s.h + dy);
-      }
+      if (dir.includes('s')) this.resizeBox.h = Math.max(MIN_H, s.h + dy);
       if (dir.includes('n')) {
         const newH = Math.max(MIN_H, s.h - dy);
         this.resizeBox.y = s.y + (s.h - newH);
@@ -181,27 +189,25 @@ export class InputHandler {
       }
 
       this.tm.updatePosition(this.resizeBox, this.canvas);
-      if (this.resizeBox._fitAddon && this.resizeBox.domEl) {
-        this.resizeBox.domEl.style.transform = '';
-        try { this.resizeBox._fitAddon.fit(); } catch {}
-        this.resizeBox.domEl.style.transform = `scale(${this.canvas.scale})`;
-      }
-      this.onRender();
+      // Don't fit during resize — only on mouseup (avoids per-frame reflow)
+      this._scheduleRender();
+      return;
     }
 
     if (this.mode === 'panning' && this.panStart) {
       const dx = e.clientX - this.panStart.x;
       const dy = e.clientY - this.panStart.y;
-      this.panStart = { x: e.clientX, y: e.clientY };
+      this.panStart.x = e.clientX;
+      this.panStart.y = e.clientY;
       this.canvas.pan(dx, dy);
       this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
+      this._scheduleRender();
     }
   }
 
   _onMouseUp(e) {
     if (this.mode === 'drawing' && this.drawPreview) {
       const { x, y, w, h } = this.drawPreview;
-      // Only spawn if box is big enough
       if (w > 50 && h > 50) {
         const worldTL = this.canvas.screenToWorld(x, y);
         const worldBR = this.canvas.screenToWorld(x + w, y + h);
@@ -218,10 +224,11 @@ export class InputHandler {
         });
       }
       this.drawPreview = null;
-      this.onRender();
+      this._scheduleRender();
     }
 
     if (this.mode === 'resizing' && this.resizeBox) {
+      // Fit terminal only on mouseup — one reflow instead of per-frame
       if (this.resizeBox._fitAddon && this.resizeBox.domEl) {
         this.resizeBox.domEl.style.transform = '';
         try { this.resizeBox._fitAddon.fit(); } catch {}
@@ -247,6 +254,6 @@ export class InputHandler {
       this.canvas.pan(-e.deltaX, -e.deltaY);
     }
     this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
-    this.onRender();
+    this._scheduleRender();
   }
 }

@@ -98,18 +98,22 @@ export class TerminalManager {
       console.warn('WebGL addon failed, falling back to canvas renderer');
     }
 
-    // Fit at world-space size (temporarily unscale so fit calculates correct cols/rows)
-    el.style.transform = '';
+    // Fit at world-space size (temporarily remove scale so fit calculates correct cols/rows)
+    const screen = canvas.worldToScreen(box.x, box.y);
+    el.style.transform = `translate(${screen.x}px, ${screen.y}px)`;
     fitAddon.fit();
-    el.style.transform = `scale(${canvas.scale})`;
+    el.style.transform = `translate(${screen.x}px, ${screen.y}px) scale(${canvas.scale})`;
 
     // Fix mouse coords for text selection under transform: scale().
     // xterm maps mouse position using the scaled bounding rect but its cell grid
     // is unscaled, so we adjust event coords to unscaled space.
+    // Cache scale on box for mouse adjustment (avoid parsing transform string)
+    box._cachedScale = canvas.scale;
+
     const screenEl = termContent.querySelector('.xterm-screen');
     if (screenEl) {
       const adjustMouse = (e) => {
-        const s = parseFloat(el.style.transform.match(/scale\(([^)]+)\)/)?.[1]) || 1;
+        const s = box._cachedScale || 1;
         if (s === 1) return;
         const rect = screenEl.getBoundingClientRect();
         const adjX = rect.left + (e.clientX - rect.left) / s;
@@ -171,16 +175,17 @@ export class TerminalManager {
     if (!box.domEl) return;
     const screen = canvas.worldToScreen(box.x, box.y);
     const el = box.domEl;
-    el.style.left = screen.x + 'px';
-    el.style.top = screen.y + 'px';
+    // Single transform for position + scale — GPU composited, no layout thrashing
+    el.style.transform = `translate(${screen.x}px, ${screen.y}px) scale(${canvas.scale})`;
     el.style.width = box.w + 'px';
     el.style.height = box.h + 'px';
-    el.style.transformOrigin = '0 0';
-    el.style.transform = `scale(${canvas.scale})`;
+    box._cachedScale = canvas.scale;
   }
 
   updateAllPositions(boxes, canvas) {
-    boxes.forEach(box => this.updatePosition(box, canvas));
+    for (let i = 0; i < boxes.length; i++) {
+      this.updatePosition(boxes[i], canvas);
+    }
   }
 
   destroy(box) {

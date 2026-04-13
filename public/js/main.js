@@ -34,7 +34,8 @@ const zoomIndicator = document.getElementById('zoom-indicator');
 
 function render() {
   canvas.render(boxStore.boxes, inputHandler?.drawPreview);
-  updateTerminalList();
+  // Only update count badge in render — full list rebuild only when dropdown is open
+  countBadge.textContent = boxStore.boxes.length;
   zoomIndicator.textContent = Math.round(canvas.scale * 100) + '%';
 }
 
@@ -69,7 +70,8 @@ themeToggle.addEventListener('click', (e) => {
   const isDark = !document.documentElement.classList.contains('dark');
   localStorage.setItem('floaterm-theme', isDark ? 'dark' : 'light');
   setThemeUI(isDark);
-  render(); // repaint canvas dots with new theme colors
+  canvas.onThemeChange(); // re-cache CSS vars
+  render();
 });
 
 const inputHandler = new InputHandler(canvasEl, canvas, boxStore, terminalManager, () => {
