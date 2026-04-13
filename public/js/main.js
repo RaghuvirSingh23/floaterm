@@ -65,6 +65,128 @@ function spawnInCenter() {
 
 document.getElementById('tool-spawn').addEventListener('click', spawnInCenter);
 
+// ── Quick spawn (green button) ──────────────────────────────────────
+function spawnWithCommand(label, cmd) {
+  // Deduplicate label if one with the same name exists
+  const existing = boxStore.boxes.filter(b => b.label === label || b.label.match(new RegExp(`^${label}-\\d+$`)));
+  const finalLabel = existing.length > 0 ? `${label}-${existing.length + 1}` : label;
+
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 2;
+  const w = 600;
+  const h = 420;
+  const world = canvas.screenToWorld(cx - w / 2, cy - h / 2);
+  const box = new Box(world.x, world.y, w / canvas.scale, h / canvas.scale, null, finalLabel);
+  boxStore.add(box);
+  boxStore.focusBox(box.id);
+  terminalManager.spawn(box, canvas).then(({ el }) => {
+    el.classList.add('focused');
+    document.querySelectorAll('.terminal-box').forEach(e => {
+      if (e !== el) e.classList.remove('focused');
+    });
+    // Send the command after shell is ready
+    if (cmd) {
+      setTimeout(() => {
+        if (box.ws && box.ws.readyState === WebSocket.OPEN) {
+          box.ws.send(cmd + '\r');
+        } else if (box.ws) {
+          box.ws.addEventListener('open', () => box.ws.send(cmd + '\r'), { once: true });
+        }
+      }, 300);
+    }
+    if (box.terminal) box.terminal.focus();
+  });
+  render();
+  saveState();
+}
+
+const qsBtn = document.getElementById('quick-spawn-btn');
+const qsMenu = document.getElementById('quick-spawn-menu');
+const qsSshHosts = document.getElementById('qs-ssh-hosts');
+
+qsBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  qsMenu.classList.toggle('hidden');
+  if (!qsMenu.classList.contains('hidden')) loadSshHosts();
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#quick-spawn-wrapper')) qsMenu.classList.add('hidden');
+});
+
+// Tool items (Claude, Codex, Terminal)
+qsMenu.querySelectorAll('.qs-item[data-cmd]').forEach(item => {
+  item.addEventListener('click', () => {
+    const cmd = item.dataset.cmd;
+    const label = item.dataset.label;
+    if (cmd === 'claude') spawnWithCommand('claude', 'claude');
+    else if (cmd === 'codex') spawnWithCommand('codex', 'codex');
+    else if (cmd === 'shell') spawnInCenter();
+    qsMenu.classList.add('hidden');
+  });
+});
+
+// SSH hosts
+let sshHostsLoaded = false;
+async function loadSshHosts() {
+  if (sshHostsLoaded) return;
+  try {
+    const res = await fetch('/api/ssh-hosts');
+    const hosts = await res.json();
+    qsSshHosts.innerHTML = '';
+
+    if (hosts.config.length === 0 && hosts.knownHosts.length === 0) {
+      qsSshHosts.innerHTML = '<span class="qs-empty">No SSH hosts found</span>';
+      sshHostsLoaded = true;
+      return;
+    }
+
+    // Config hosts first (named, cleaner)
+    for (const host of hosts.config) {
+      const item = document.createElement('div');
+      item.className = 'qs-item';
+      item.innerHTML = `<span class="qs-icon">&#8594;</span> ${host}`;
+      item.addEventListener('click', () => {
+        spawnWithCommand(`ssh:${host}`, `ssh ${host}`);
+        qsMenu.classList.add('hidden');
+      });
+      qsSshHosts.appendChild(item);
+    }
+
+    // Known hosts (IPs) — show first 10 with a label separator
+    if (hosts.knownHosts.length > 0 && hosts.config.length > 0) {
+      const sep = document.createElement('div');
+      sep.className = 'qs-section-label';
+      sep.textContent = 'Known Hosts';
+      sep.style.marginTop = '4px';
+      qsSshHosts.appendChild(sep);
+    }
+
+    const knownSlice = hosts.knownHosts.slice(0, 15);
+    for (const host of knownSlice) {
+      const item = document.createElement('div');
+      item.className = 'qs-item';
+      item.innerHTML = `<span class="qs-icon">&#8594;</span> ${host}`;
+      item.addEventListener('click', () => {
+        spawnWithCommand(`ssh:${host}`, `ssh ${host}`);
+        qsMenu.classList.add('hidden');
+      });
+      qsSshHosts.appendChild(item);
+    }
+
+    if (hosts.knownHosts.length > 15) {
+      const more = document.createElement('span');
+      more.className = 'qs-empty';
+      more.textContent = `+${hosts.knownHosts.length - 15} more`;
+      qsSshHosts.appendChild(more);
+    }
+
+    sshHostsLoaded = true;
+  } catch {
+    qsSshHosts.innerHTML = '<span class="qs-empty">Failed to load hosts</span>';
+  }
+}
+
 // ── Terminal list dropdown ───────────────────────────────────────────
 const listToggle = document.getElementById('terminal-list-toggle');
 const listPanel = document.getElementById('terminal-list');
@@ -156,7 +278,7 @@ function updateTerminalList() {
     item.appendChild(close);
 
     item.addEventListener('click', () => {
-      // Focus and pan to this terminal
+      // Focus this terminal and bring to front
       boxStore.focusBox(box.id);
       document.querySelectorAll('.terminal-box').forEach(el => {
         el.classList.toggle('focused', el.dataset.boxId === String(box.id));
@@ -165,18 +287,7 @@ function updateTerminalList() {
         box.domEl.parentElement.appendChild(box.domEl);
       }
       if (box.terminal) box.terminal.focus();
-
-      // Pan canvas so this terminal is centered
-      const screenTarget = {
-        x: window.innerWidth / 2 - (box.w * canvas.scale) / 2,
-        y: window.innerHeight / 2 - (box.h * canvas.scale) / 2,
-      };
-      const currentScreen = canvas.worldToScreen(box.x, box.y);
-      canvas.pan(screenTarget.x - currentScreen.x, screenTarget.y - currentScreen.y);
-      terminalManager.updateAllPositions(boxStore.boxes, canvas);
-
       render();
-      saveState();
       listPanel.classList.add('hidden');
     });
 

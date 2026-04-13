@@ -181,8 +181,10 @@ export class InputHandler {
       }
 
       this.tm.updatePosition(this.resizeBox, this.canvas);
-      if (this.resizeBox._fitAddon) {
+      if (this.resizeBox._fitAddon && this.resizeBox.domEl) {
+        this.resizeBox.domEl.style.transform = '';
         try { this.resizeBox._fitAddon.fit(); } catch {}
+        this.resizeBox.domEl.style.transform = `scale(${this.canvas.scale})`;
       }
       this.onRender();
     }
@@ -220,14 +222,15 @@ export class InputHandler {
     }
 
     if (this.mode === 'resizing' && this.resizeBox) {
-      if (this.resizeBox._fitAddon) {
+      if (this.resizeBox._fitAddon && this.resizeBox.domEl) {
+        this.resizeBox.domEl.style.transform = '';
         try { this.resizeBox._fitAddon.fit(); } catch {}
+        this.resizeBox.domEl.style.transform = `scale(${this.canvas.scale})`;
       }
     }
 
     if (this.mode === 'panning') {
       this.canvasEl.classList.remove('grabbing');
-      this.tm.fitAll(this.boxStore.boxes);
     }
 
     this.mode = 'idle';
@@ -245,11 +248,5 @@ export class InputHandler {
     }
     this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
     this.onRender();
-
-    // Debounce xterm fit after zoom/pan settles
-    clearTimeout(this._fitTimeout);
-    this._fitTimeout = setTimeout(() => {
-      this.tm.fitAll(this.boxStore.boxes);
-    }, 150);
   }
 }

@@ -48,6 +48,69 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #ffffff; }
 .tool-btn:hover { background: #f0f0f0; color: #333; }
 .tool-btn.active { background: #e8e8ff; color: #4a4aff; }
 
+/* ── Quick spawn button (green, matches sessions button style) ──── */
+#quick-spawn-wrapper {
+  position: absolute;
+  top: 12px;
+  right: 92px;
+  z-index: 20;
+}
+
+#quick-spawn-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #1f883d;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: pointer;
+  font: 13px/1 -apple-system, sans-serif;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  transition: background 0.1s;
+}
+#quick-spawn-btn:hover { background: #1c8139; }
+
+#quick-spawn-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 220px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+#quick-spawn-menu.hidden { display: none; }
+
+.qs-section-label {
+  padding: 6px 10px 3px;
+  font: 600 10px/1 -apple-system, sans-serif;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.qs-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: 13px/1 -apple-system, sans-serif;
+  color: #333;
+  transition: background 0.1s;
+}
+.qs-item:hover { background: #f0fdf4; }
+
+.qs-icon { width: 20px; text-align: center; color: #666; flex-shrink: 0; }
+.qs-loading, .qs-empty { display: block; padding: 8px 10px; font: 12px/1 -apple-system, sans-serif; color: #aaa; }
+
 .toolbar-divider {
   width: 1px;
   height: 20px;

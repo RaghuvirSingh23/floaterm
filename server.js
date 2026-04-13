@@ -140,6 +140,34 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // REST API: SSH hosts from ~/.ssh/config and known_hosts
+  if (url.pathname === '/api/ssh-hosts' && req.method === 'GET') {
+    const hosts = { config: [], knownHosts: [] };
+    try {
+      const sshConfig = fs.readFileSync(path.join(process.env.HOME, '.ssh', 'config'), 'utf8');
+      const configHosts = sshConfig.match(/^Host\s+(.+)$/gm);
+      if (configHosts) {
+        hosts.config = configHosts
+          .map(h => h.replace(/^Host\s+/, '').trim())
+          .filter(h => !h.includes('*'));
+      }
+    } catch {}
+    try {
+      const known = fs.readFileSync(path.join(process.env.HOME, '.ssh', 'known_hosts'), 'utf8');
+      const seen = new Set();
+      known.split('\n').forEach(line => {
+        const host = line.split(/\s/)[0];
+        if (host) {
+          const clean = host.split(',')[0].replace(/^\[/, '').replace(/\]:\d+$/, '');
+          if (clean && !seen.has(clean)) { seen.add(clean); hosts.knownHosts.push(clean); }
+        }
+      });
+    } catch {}
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(hosts));
+    return;
+  }
+
   // Static files
   const filePath = path.join(__dirname, 'public', url.pathname === '/' ? 'index.html' : url.pathname);
   const ext = path.extname(filePath);
