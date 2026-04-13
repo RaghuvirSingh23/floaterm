@@ -97,10 +97,31 @@ export class TerminalManager {
       console.warn('WebGL addon failed, falling back to canvas renderer');
     }
 
-    // Fit at world-space size (remove transform temporarily so getBoundingClientRect is unscaled)
+    // Fit at world-space size (temporarily unscale so fit calculates correct cols/rows)
     el.style.transform = '';
     fitAddon.fit();
     el.style.transform = `scale(${canvas.scale})`;
+
+    // Fix mouse coords for text selection under transform: scale().
+    // xterm maps mouse position using the scaled bounding rect but its cell grid
+    // is unscaled, so we adjust event coords to unscaled space.
+    const screenEl = termContent.querySelector('.xterm-screen');
+    if (screenEl) {
+      const adjustMouse = (e) => {
+        const s = parseFloat(el.style.transform.match(/scale\(([^)]+)\)/)?.[1]) || 1;
+        if (s === 1) return;
+        const rect = screenEl.getBoundingClientRect();
+        const adjX = rect.left + (e.clientX - rect.left) / s;
+        const adjY = rect.top + (e.clientY - rect.top) / s;
+        Object.defineProperties(e, {
+          clientX: { value: adjX },
+          clientY: { value: adjY },
+        });
+      };
+      for (const evt of ['mousedown', 'mousemove', 'mouseup']) {
+        screenEl.addEventListener(evt, adjustMouse, { capture: true });
+      }
+    }
     box.terminal = term;
     box._fitAddon = fitAddon;
 
