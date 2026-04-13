@@ -1,0 +1,83 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+
+#canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1;
+  cursor: crosshair;
+}
+
+#terminal-container {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.terminal-box {
+  position: absolute;
+  pointer-events: auto;
+  border: 2px solid #4a4a6a;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0f0f23;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-box.focused {
+  border-color: #7c7cff;
+  box-shadow: 0 0 12px rgba(124, 124, 255, 0.3);
+}
+
+.terminal-box .label-bar {
+  height: 24px;
+  background: #16213e;
+  color: #8888aa;
+  font: 12px/24px monospace;
+  padding: 0 8px;
+  cursor: grab;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.terminal-box .label-bar .label-text {
+  cursor: text;
+  min-width: 20px;
+  outline: none;
+}
+
+.terminal-box .label-bar .close-btn {
+  cursor: pointer;
+  opacity: 0.5;
+  font-size: 14px;
+}
+.terminal-box .label-bar .close-btn:hover { opacity: 1; }
+
+.terminal-box .term-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.terminal-box .resize-handle {
+  position: absolute;
+  bottom: 0; right: 0;
+  width: 12px; height: 12px;
+  cursor: nwse-resize;
+  z-index: 3;
+}
+
+.draw-preview {
+  position: absolute;
+  border: 2px dashed #7c7cff;
+  background: rgba(124, 124, 255, 0.05);
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 10;
+}

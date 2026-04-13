@@ -1,0 +1,14 @@
+{
+  "name": "floaterm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Draw terminals on an infinite canvas",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "node-pty": "^1.2.0-beta.12",
+    "ws": "^8.18.0"
+  }
+}
