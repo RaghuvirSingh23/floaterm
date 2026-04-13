@@ -16,7 +16,10 @@
     "dist:linux": "electron-builder --linux"
   },
   "keywords": ["terminal", "canvas", "multiplexer", "xterm", "pty"],
-  "author": "Raghuvir Singh",
+  "author": {
+    "name": "Raghuvir Singh",
+    "email": "raghuvirsingh23@gmail.com"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -55,7 +58,7 @@
     "mac": {
       "target": ["dmg", "zip"],
       "category": "public.app-category.developer-tools",
-      "icon": "public/icon.svg"
+      "identity": null
     },
     "win": {
       "target": ["nsis", "zip"]
@@ -67,6 +70,7 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false
-    }
+    },
+    "publish": null
   }
 }
