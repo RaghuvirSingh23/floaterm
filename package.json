@@ -1,6 +1,6 @@
 {
   "name": "floaterm",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "Draw terminals on an infinite canvas",
   "main": "electron/main.js",
   "bin": {

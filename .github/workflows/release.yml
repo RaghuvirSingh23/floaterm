@@ -1,8 +1,7 @@
-name: Build & Release
+name: Release
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -75,27 +74,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Get version
-        id: version
-        run: echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
-
-      - name: Create or update release
+      - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}-build.${{ github.run_number }}
-          name: floaterm v${{ steps.version.outputs.version }} (build ${{ github.run_number }})
+          tag_name: v${{ steps.version.outputs.version }}
+          name: floaterm v${{ steps.version.outputs.version }}
           body: |
-            Automated build from commit ${{ github.sha }}.
+            ## floaterm v${{ steps.version.outputs.version }}
 
             **Downloads:**
             - **macOS**: `.dmg` or `.zip`
-            - **Windows**: `.exe`
+            - **Windows**: `.exe` installer or `.zip`
             - **Linux**: `.AppImage` or `.deb`
+
+            **Or install via npm:**
+            ```
+            npx floaterm
+            ```
           files: artifacts/**/*
           draft: false
           prerelease: false
