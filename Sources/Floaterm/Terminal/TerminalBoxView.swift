@@ -5,17 +5,20 @@ final class TerminalBoxView: NSView {
     let boxId: String
     var terminalView: TerminalView!
     var ptySession: PTYSession?
-    private var titleBar: NSView!
+    private var titleBar: TitleBarView!
     private var labelField: NSTextField!
     private var closeButton: NSButton!
-    private var resizeHandles: [String: NSView] = [:]
+    private var resizeHandles: [String: ResizeHandleView] = [:]
 
-    var onDragStart: ((String, CGPoint) -> Void)?
-    var onResizeStart: ((String, String, CGPoint) -> Void)?
+    var onDragStart: ((String, NSPoint) -> Void)?
+    var onDragMoved: ((NSEvent) -> Void)?
+    var onDragEnded: ((NSEvent) -> Void)?
+    var onResizeStart: ((String, String, NSEvent) -> Void)?
+    var onResizeMoved: ((NSEvent) -> Void)?
+    var onResizeEnded: ((NSEvent) -> Void)?
     var onFocus: ((String) -> Void)?
     var onClose: ((String) -> Void)?
     var onLabelChanged: ((String, String) -> Void)?
-    var onResizeEnd: ((String, Int, Int) -> Void)?
 
     override var isFlipped: Bool { true }
 
@@ -39,18 +42,22 @@ final class TerminalBoxView: NSView {
     // MARK: - Setup
 
     private func setupTitleBar(label: String) {
-        titleBar = NSView()
+        titleBar = TitleBarView()
         titleBar.wantsLayer = true
         titleBar.layer?.backgroundColor = Colors.titleBarBg.cgColor
         addSubview(titleBar)
 
-        labelField = NSTextField(labelWithString: label)
+        labelField = NSTextField(string: label)
         labelField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         labelField.textColor = Colors.titleBarText
         labelField.backgroundColor = .clear
+        labelField.drawsBackground = false
         labelField.isBordered = false
         labelField.isEditable = false
+        labelField.isSelectable = false
+        labelField.focusRingType = .none
         labelField.lineBreakMode = .byTruncatingTail
+        labelField.delegate = self
         titleBar.addSubview(labelField)
 
         closeButton = NSButton(title: "\u{2715}", target: self, action: #selector(closeTapped))
@@ -59,6 +66,22 @@ final class TerminalBoxView: NSView {
         closeButton.contentTintColor = Colors.titleBarText
         closeButton.alphaValue = 0.5
         titleBar.addSubview(closeButton)
+
+        // Title bar drag/double-click
+        titleBar.onDragStart = { [weak self] event in
+            guard let self else { return }
+            self.onFocus?(self.boxId)
+            self.onDragStart?(self.boxId, event.locationInWindow)
+        }
+        titleBar.onDragMoved = { [weak self] event in
+            self?.onDragMoved?(event)
+        }
+        titleBar.onDragEnded = { [weak self] event in
+            self?.onDragEnded?(event)
+        }
+        titleBar.onDoubleClick = { [weak self] in
+            self?.startEditingLabel()
+        }
     }
 
     private func setupTerminalView() {
@@ -79,9 +102,15 @@ final class TerminalBoxView: NSView {
         for handle in handles {
             let view = ResizeHandleView(direction: handle)
             view.cursor = cursors[handle] ?? .arrow
-            view.onMouseDown = { [weak self] point in
+            view.onDragStart = { [weak self] event in
                 guard let self else { return }
-                self.onResizeStart?(self.boxId, handle, self.convert(point, to: nil))
+                self.onResizeStart?(self.boxId, handle, event)
+            }
+            view.onDragMoved = { [weak self] event in
+                self?.onResizeMoved?(event)
+            }
+            view.onDragEnded = { [weak self] event in
+                self?.onResizeEnded?(event)
             }
             addSubview(view)
             resizeHandles[handle] = view
@@ -96,12 +125,12 @@ final class TerminalBoxView: NSView {
         let th = Dimensions.titleBarHeight
 
         titleBar.frame = NSRect(x: 0, y: 0, width: b.width, height: th)
-        labelField.frame = NSRect(x: 8, y: 0, width: b.width - 40, height: th)
+        labelField.frame = NSRect(x: 8, y: 2, width: b.width - 40, height: th - 4)
         closeButton.frame = NSRect(x: b.width - 24, y: 2, width: 20, height: 20)
 
         terminalView.frame = NSRect(x: 0, y: th, width: b.width, height: b.height - th)
 
-        // Position resize handles
+        // Resize handles
         let hs = Dimensions.resizeHandleSize
         let cs = Dimensions.cornerHandleSize
         resizeHandles["n"]?.frame = NSRect(x: 10, y: -3, width: b.width - 20, height: hs)
@@ -119,25 +148,21 @@ final class TerminalBoxView: NSView {
     func connectPTY(_ session: PTYSession) {
         self.ptySession = session
 
-        // Feed existing scrollback
         if !session.scrollback.isEmpty, let data = session.scrollback.data(using: .utf8) {
             terminalView.feed(byteArray: ArraySlice(data))
         }
 
-        // Wire PTY output to terminal view
         session.onOutput = { [weak self] data in
             self?.terminalView.feed(byteArray: ArraySlice(data))
         }
 
-        // Wire terminal input to PTY
         terminalView.terminalDelegate = self
     }
 
     func updateCols() -> (cols: Int, rows: Int) {
-        // Estimate based on font metrics — SwiftTerm uses a monospaced font
         let fontSize: CGFloat = 14
-        let cellWidth: CGFloat = fontSize * 0.6  // approximate monospace char width
-        let cellHeight: CGFloat = fontSize * 1.2 // approximate line height
+        let cellWidth: CGFloat = fontSize * 0.6
+        let cellHeight: CGFloat = fontSize * 1.2
         let contentHeight = bounds.height - Dimensions.titleBarHeight
         let cols = max(1, Int(bounds.width / cellWidth))
         let rows = max(1, Int(contentHeight / cellHeight))
@@ -153,17 +178,36 @@ final class TerminalBoxView: NSView {
         }
     }
 
-    // MARK: - Title bar drag
+    // MARK: - Mouse — click on terminal body focuses
 
     override func mouseDown(with event: NSEvent) {
-        let loc = convert(event.locationInWindow, from: nil)
-        if loc.y < Dimensions.titleBarHeight {
-            onFocus?(boxId)
-            onDragStart?(boxId, event.locationInWindow)
-        } else {
-            onFocus?(boxId)
-            super.mouseDown(with: event)
+        onFocus?(boxId)
+        // Let SwiftTerm handle clicks in the terminal area
+        super.mouseDown(with: event)
+    }
+
+    // MARK: - Label editing
+
+    private func startEditingLabel() {
+        labelField.isEditable = true
+        labelField.isSelectable = true
+        labelField.textColor = .white
+        labelField.backgroundColor = NSColor(white: 0.2, alpha: 1)
+        labelField.drawsBackground = true
+        window?.makeFirstResponder(labelField)
+        labelField.selectText(nil)
+    }
+
+    private func finishEditingLabel() {
+        labelField.isEditable = false
+        labelField.isSelectable = false
+        labelField.textColor = Colors.titleBarText
+        labelField.drawsBackground = false
+        let text = labelField.stringValue.trimmingCharacters(in: .whitespaces)
+        if !text.isEmpty {
+            onLabelChanged?(boxId, text)
         }
+        window?.makeFirstResponder(terminalView)
     }
 
     @objc private func closeTapped() {
@@ -172,6 +216,27 @@ final class TerminalBoxView: NSView {
 
     func updateLabel(_ text: String) {
         labelField.stringValue = text
+    }
+}
+
+// MARK: - NSTextFieldDelegate
+
+extension TerminalBoxView: NSTextFieldDelegate {
+    func controlTextDidEndEditing(_ obj: Notification) {
+        finishEditingLabel()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            finishEditingLabel()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            labelField.abortEditing()
+            finishEditingLabel()
+            return true
+        }
+        return false
     }
 }
 
@@ -193,12 +258,48 @@ extension TerminalBoxView: TerminalViewDelegate {
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }
 
-// MARK: - Resize handle view
+// MARK: - Title bar view (handles drag separately from SwiftTerm)
+
+private class TitleBarView: NSView {
+    override var isFlipped: Bool { true }
+    var onDragStart: ((NSEvent) -> Void)?
+    var onDragMoved: ((NSEvent) -> Void)?
+    var onDragEnded: ((NSEvent) -> Void)?
+    var onDoubleClick: (() -> Void)?
+    private var isDragging = false
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onDoubleClick?()
+        } else {
+            isDragging = true
+            onDragStart?(event)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if isDragging {
+            onDragMoved?(event)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isDragging {
+            isDragging = false
+            onDragEnded?(event)
+        }
+    }
+}
+
+// MARK: - Resize handle view (handles its own drag lifecycle)
 
 private class ResizeHandleView: NSView {
     let direction: String
     var cursor: NSCursor = .arrow
-    var onMouseDown: ((CGPoint) -> Void)?
+    var onDragStart: ((NSEvent) -> Void)?
+    var onDragMoved: ((NSEvent) -> Void)?
+    var onDragEnded: ((NSEvent) -> Void)?
+    private var isDragging = false
 
     init(direction: String) {
         self.direction = direction
@@ -211,6 +312,18 @@ private class ResizeHandleView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        onMouseDown?(convert(event.locationInWindow, from: nil))
+        isDragging = true
+        onDragStart?(event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if isDragging { onDragMoved?(event) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isDragging {
+            isDragging = false
+            onDragEnded?(event)
+        }
     }
 }

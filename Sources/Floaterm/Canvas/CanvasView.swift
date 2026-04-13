@@ -27,11 +27,23 @@ final class CanvasView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    override func mouseDown(with event: NSEvent) { onMouseDown?(event) }
+    override func mouseDown(with event: NSEvent) {
+        print("[Canvas] mouseDown at window=\(event.locationInWindow) view=\(convert(event.locationInWindow, from: nil))")
+        onMouseDown?(event)
+    }
     override func mouseDragged(with event: NSEvent) { onMouseDragged?(event) }
-    override func mouseUp(with event: NSEvent) { onMouseUp?(event) }
-    override func scrollWheel(with event: NSEvent) { onScrollWheel?(event) }
-    override func keyDown(with event: NSEvent) { onKeyDown?(event) }
+    override func mouseUp(with event: NSEvent) {
+        print("[Canvas] mouseUp at window=\(event.locationInWindow)")
+        onMouseUp?(event)
+    }
+    override func scrollWheel(with event: NSEvent) {
+        print("[Canvas] scrollWheel deltaX=\(event.scrollingDeltaX) deltaY=\(event.scrollingDeltaY) cmd=\(event.modifierFlags.contains(.command)) opt=\(event.modifierFlags.contains(.option))")
+        onScrollWheel?(event)
+    }
+    override func keyDown(with event: NSEvent) {
+        print("[Canvas] keyDown key=\(event.charactersIgnoringModifiers ?? "?")")
+        onKeyDown?(event)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }

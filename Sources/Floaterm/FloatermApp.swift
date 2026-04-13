@@ -64,20 +64,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         terminalContainer.autoresizingMask = [.width, .height]
         contentView.addSubview(terminalContainer)
 
-        // Layer 2: SwiftUI overlays
-        let overlayView = NSHostingView(rootView: OverlayView(
-            appState: appState,
-            onSpawnCenter: { [weak self] in self?.spawnInCenter() },
-            onSpawnCommand: { [weak self] label, cmd in self?.spawnWithCommand(label: label, command: cmd) },
-            onZoomReset: { [weak self] in self?.resetZoom() },
-            onToggleTheme: { [weak self] in self?.toggleTheme() },
-            onFocusTerminal: { [weak self] id in self?.focusTerminal(id: id) },
-            onCloseTerminal: { [weak self] id in self?.closeTerminal(id: id) },
-            onRenameTerminal: { [weak self] id, label in self?.renameTerminal(id: id, label: label) }
-        ))
-        overlayView.frame = contentView.bounds
-        overlayView.autoresizingMask = [.width, .height]
-        contentView.addSubview(overlayView)
+        // Layer 2: Individual SwiftUI overlay panels (not one giant hosting view)
+        addOverlayPanel(
+            rootView: ToolbarView(appState: appState)
+                .onTapGesture { [weak self] in
+                    if self?.appState.activeTool == .spawn { self?.spawnInCenter() }
+                },
+            to: contentView,
+            alignment: .topCenter
+        )
+
+        addOverlayPanel(
+            rootView: HStack(spacing: 8) {
+                QuickSpawnMenu(appState: appState, onSpawn: { [weak self] label, cmd in
+                    self?.spawnWithCommand(label: label, command: cmd)
+                })
+                TerminalListPopover(
+                    appState: appState,
+                    onFocus: { [weak self] id in self?.focusTerminal(id: id) },
+                    onClose: { [weak self] id in self?.closeTerminal(id: id) },
+                    onRename: { [weak self] id, label in self?.renameTerminal(id: id, label: label) }
+                )
+            },
+            to: contentView,
+            alignment: .topRight
+        )
+
+        addOverlayPanel(
+            rootView: ZoomBar(
+                appState: appState,
+                onReset: { [weak self] in self?.resetZoom() },
+                onToggleTheme: { [weak self] in self?.toggleTheme() }
+            ),
+            to: contentView,
+            alignment: .bottomLeft
+        )
+
+        // Logo (non-interactive)
+        let logoView = NSHostingView(rootView:
+            HStack(spacing: 6) {
+                Image(systemName: "terminal").font(.system(size: 14))
+                Text("floaterm").font(.system(size: 14, weight: .semibold))
+            }
+            .foregroundStyle(.secondary)
+            .opacity(0.7)
+        )
+        logoView.frame = NSRect(x: 16, y: 14, width: 120, height: 24)
+        logoView.wantsLayer = true
+        logoView.layer?.backgroundColor = .clear
+        contentView.addSubview(logoView)
 
         // Input controller
         inputController = CanvasInputController()
@@ -116,6 +151,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.saveEnabled = true
         }
+
+        // DEBUG: Self-test after 3 seconds (no spawn, just check hitTest)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.runSelfTest()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -136,17 +176,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         boxView.layer?.transform = CATransform3DMakeScale(appState.transform.scale, appState.transform.scale, 1)
 
         boxView.onDragStart = { [weak self] id, point in
-            self?.inputController.startDragBox(id: id, screenPoint: point)
+            self?.inputController.startDragBox(id: id, windowPoint: point)
         }
-        boxView.onResizeStart = { [weak self] id, handle, point in
-            self?.inputController.startResizeBox(id: id, handle: handle, screenPoint: point)
+        boxView.onDragMoved = { [weak self] event in
+            self?.inputController.dragBoxMoved(with: event)
+        }
+        boxView.onDragEnded = { [weak self] event in
+            self?.inputController.dragBoxEnded(with: event)
+        }
+        boxView.onResizeStart = { [weak self] id, handle, event in
+            self?.inputController.startResizeBox(id: id, handle: handle, event: event)
+        }
+        boxView.onResizeMoved = { [weak self] event in
+            self?.inputController.resizeBoxMoved(with: event)
+        }
+        boxView.onResizeEnded = { [weak self] event in
+            self?.inputController.resizeBoxEnded(with: event)
         }
         boxView.onFocus = { [weak self] id in self?.focusTerminal(id: id) }
         boxView.onClose = { [weak self] id in self?.closeTerminal(id: id) }
         boxView.onLabelChanged = { [weak self] id, label in self?.renameTerminal(id: id, label: label) }
-        boxView.onResizeEnd = { [weak self] id, cols, rows in
-            self?.ptyManager.session(for: id)?.resize(cols: cols, rows: rows)
-        }
 
         terminalContainer.addSubview(boxView)
         terminalBoxViews[box.id] = boxView
@@ -192,10 +241,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         boxView.layer?.anchorPoint = CGPoint(x: 0, y: 0)
         boxView.layer?.transform = CATransform3DMakeScale(appState.transform.scale, appState.transform.scale, 1)
 
-        boxView.onDragStart = { [weak self] id, point in self?.inputController.startDragBox(id: id, screenPoint: point) }
-        boxView.onResizeStart = { [weak self] id, handle, point in self?.inputController.startResizeBox(id: id, handle: handle, screenPoint: point) }
+        boxView.onDragStart = { [weak self] id, point in self?.inputController.startDragBox(id: id, windowPoint: point) }
+        boxView.onDragMoved = { [weak self] event in self?.inputController.dragBoxMoved(with: event) }
+        boxView.onDragEnded = { [weak self] event in self?.inputController.dragBoxEnded(with: event) }
+        boxView.onResizeStart = { [weak self] id, handle, event in self?.inputController.startResizeBox(id: id, handle: handle, event: event) }
+        boxView.onResizeMoved = { [weak self] event in self?.inputController.resizeBoxMoved(with: event) }
+        boxView.onResizeEnded = { [weak self] event in self?.inputController.resizeBoxEnded(with: event) }
         boxView.onFocus = { [weak self] id in self?.focusTerminal(id: id) }
         boxView.onClose = { [weak self] id in self?.closeTerminal(id: id) }
+        boxView.onLabelChanged = { [weak self] id, label in self?.renameTerminal(id: id, label: label) }
 
         terminalContainer.addSubview(boxView)
         terminalBoxViews[box.id] = boxView
@@ -277,6 +331,96 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Overlay panels
+
+    enum OverlayAlignment { case topCenter, topRight, bottomLeft }
+
+    private func addOverlayPanel<V: View>(rootView: V, to parent: NSView, alignment: OverlayAlignment) {
+        let hosting = ClickableHostingView(rootView: rootView)
+        hosting.wantsLayer = true
+        hosting.layer?.backgroundColor = .clear
+
+        // Size to fit content
+        let fittingSize = hosting.fittingSize
+        let parentBounds = parent.bounds
+
+        var origin: NSPoint
+        switch alignment {
+        case .topCenter:
+            origin = NSPoint(x: (parentBounds.width - fittingSize.width) / 2, y: 12)
+        case .topRight:
+            origin = NSPoint(x: parentBounds.width - fittingSize.width - 16, y: 12)
+        case .bottomLeft:
+            origin = NSPoint(x: 16, y: parentBounds.height - fittingSize.height - 12)
+        }
+
+        hosting.frame = NSRect(origin: origin, size: fittingSize)
+
+        // Auto-resize with superview
+        switch alignment {
+        case .topCenter:
+            hosting.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
+        case .topRight:
+            hosting.autoresizingMask = [.minXMargin, .maxYMargin]
+        case .bottomLeft:
+            hosting.autoresizingMask = [.maxXMargin, .minYMargin]
+        }
+
+        parent.addSubview(hosting)
+    }
+
+    // MARK: - Self test
+
+    private func runSelfTest() {
+        NSLog("=== SELF TEST START ===")
+        let cv = canvasView!
+        let bounds = cv.bounds
+        NSLog("[TEST] Canvas bounds: \(bounds)")
+        NSLog("[TEST] Canvas isFlipped: \(cv.isFlipped)")
+        NSLog("[TEST] Canvas acceptsFirstResponder: \(cv.acceptsFirstResponder)")
+        NSLog("[TEST] Canvas onMouseDown set: \(cv.onMouseDown != nil)")
+        NSLog("[TEST] Canvas onScrollWheel set: \(cv.onScrollWheel != nil)")
+        NSLog("[TEST] Active tool: \(appState.activeTool)")
+        NSLog("[TEST] Transform: offset=(\(appState.transform.offsetX), \(appState.transform.offsetY)) scale=\(appState.transform.scale)")
+
+        // Test hitTest at various points
+        let testPoints: [(String, NSPoint)] = [
+            ("center", NSPoint(x: 600, y: 400)),
+            ("top-left canvas", NSPoint(x: 100, y: 100)),
+            ("toolbar area", NSPoint(x: 600, y: 20)),
+            ("zoom bar area", NSPoint(x: 50, y: 780)),
+            ("quick spawn area", NSPoint(x: 1100, y: 20)),
+        ]
+        for (label, pt) in testPoints {
+            let hit = window.contentView?.hitTest(pt)
+            let desc = hit.map { String(describing: type(of: $0)) } ?? "nil"
+            NSLog("[TEST] hitTest '\(label)' at \(pt) -> \(desc)")
+        }
+
+        // Test spawn
+        NSLog("[TEST] Boxes from restore: \(appState.boxes.count)")
+        NSLog("[TEST] Shapes from restore: \(appState.shapes.count)")
+
+        // Log all subviews of contentView with frames
+        let cv2 = window.contentView!
+        for (i, sub) in cv2.subviews.enumerated() {
+            NSLog("[TEST] contentView.subview[\(i)] = \(type(of: sub)) frame=\(sub.frame) hidden=\(sub.isHidden)")
+        }
+
+        // Direct hitTest on toolbar's hosting view
+        let toolbarHosting = cv2.subviews[2] // toolbar
+        let toolbarCenter = NSPoint(x: toolbarHosting.frame.midX, y: toolbarHosting.frame.midY)
+        let toolbarHit = cv2.hitTest(toolbarCenter)
+        NSLog("[TEST] toolbar direct hitTest at \(toolbarCenter) -> \(toolbarHit.map { String(describing: type(of: $0)) } ?? "nil")")
+
+        // Also test if the toolbar hosting view itself gets the hit
+        let localPoint = toolbarHosting.convert(toolbarCenter, from: cv2)
+        let directHit = toolbarHosting.hitTest(localPoint)
+        NSLog("[TEST] toolbar LOCAL hitTest at local=\(localPoint) -> \(directHit.map { String(describing: type(of: $0)) } ?? "nil")")
+
+        NSLog("=== SELF TEST DONE ===")
+    }
+
     // MARK: - Menu bar
 
     private func buildMenuBar() {
@@ -321,86 +465,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - SwiftUI overlay container
-
-private struct OverlayView: View {
-    @ObservedObject var appState: AppState
-    var onSpawnCenter: () -> Void
-    var onSpawnCommand: (String, String) -> Void
-    var onZoomReset: () -> Void
-    var onToggleTheme: () -> Void
-    var onFocusTerminal: (String) -> Void
-    var onCloseTerminal: (String) -> Void
-    var onRenameTerminal: (String, String) -> Void
-
-    var body: some View {
-        ZStack {
-            Color.clear // pass-through
-
-            // Top center: Toolbar
-            VStack {
-                ToolbarView(appState: appState)
-                    .onTapGesture {
-                        if appState.activeTool == .spawn { onSpawnCenter() }
-                    }
-                Spacer()
-            }
-            .padding(.top, 12)
-
-            // Top right: Quick spawn + Terminal list
-            VStack {
-                HStack(spacing: 8) {
-                    Spacer()
-                    QuickSpawnMenu(appState: appState, onSpawn: onSpawnCommand)
-                    TerminalListPopover(
-                        appState: appState,
-                        onFocus: onFocusTerminal,
-                        onClose: onCloseTerminal,
-                        onRename: onRenameTerminal
-                    )
-                }
-                Spacer()
-            }
-            .padding(.top, 12)
-            .padding(.trailing, 16)
-
-            // Top left: Logo
-            VStack {
-                HStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "terminal")
-                            .font(.system(size: 14))
-                        Text("floaterm")
-                            .font(.system(size: 14, weight: .semibold, design: .default))
-                    }
-                    .foregroundStyle(.secondary)
-                    .opacity(0.7)
-                    Spacer()
-                }
-                Spacer()
-            }
-            .padding(.top, 14)
-            .padding(.leading, 16)
-            .allowsHitTesting(false)
-
-            // Bottom left: Zoom bar
-            VStack {
-                Spacer()
-                HStack {
-                    ZoomBar(
-                        appState: appState,
-                        onReset: onZoomReset,
-                        onToggleTheme: onToggleTheme
-                    )
-                    Spacer()
-                }
-            }
-            .padding(.bottom, 12)
-            .padding(.leading, 16)
-        }
-        .allowsHitTesting(true)
-    }
-}
+// (OverlayView removed — using individual overlay panels instead)
 
 // MARK: - Helper views
 
@@ -409,11 +474,45 @@ private class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// NSHostingView that always accepts clicks within its bounds.
+/// SwiftUI's internal hitTest often returns nil when embedded in AppKit,
+/// so we force it to accept events, letting SwiftUI handle routing internally.
+private class ClickableHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // hitTest point is in UNFLIPPED superview coords (origin bottom-left)
+        // But our frame is in FLIPPED coords (origin top-left) because superview.isFlipped = true
+        // Need to flip the point's Y to match our frame's coordinate space
+        guard let sv = superview else { return nil }
+        let flippedY = sv.bounds.height - point.y
+        let flippedPoint = NSPoint(x: point.x, y: flippedY)
+        if frame.contains(flippedPoint) {
+            return self
+        }
+        return nil
+    }
+}
+
 /// An NSView that passes through mouse events when no child is hit
 private class PassthroughView: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
         let result = super.hitTest(point)
         return result === self ? nil : result
+    }
+}
+
+/// NSHostingView that lets mouse events pass through empty areas to views below.
+/// Only intercepts clicks that actually land on a SwiftUI control.
+private class PassthroughHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Our parent is flipped (origin top-left) but NSHostingView is NOT flipped
+        // (origin bottom-left). We need to flip the Y coordinate for super.hitTest.
+        let flippedPoint = NSPoint(x: point.x, y: bounds.height - point.y)
+        let result = super.hitTest(flippedPoint)
+        // Pass through if nothing was hit, or only the hosting view background
+        if result == nil || result === self {
+            return nil
+        }
+        return result
     }
 }

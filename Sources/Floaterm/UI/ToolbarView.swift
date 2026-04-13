@@ -10,7 +10,6 @@ struct ToolbarView: View {
             Divider().frame(height: 20)
             toolButton(tool: .spawn, icon: "plus.rectangle", tooltip: "New terminal")
             Divider().frame(height: 20)
-            // Annotation tools
             toolButton(tool: .shapeRect, icon: "rectangle", tooltip: "Rectangle")
             toolButton(tool: .shapeCircle, icon: "circle", tooltip: "Circle")
             toolButton(tool: .shapeArrow, icon: "arrow.right", tooltip: "Arrow")
@@ -18,9 +17,11 @@ struct ToolbarView: View {
             toolButton(tool: .shapeFreehand, icon: "scribble", tooltip: "Freehand")
         }
         .padding(4)
-        .background(.regularMaterial)
+        .background(Color(nsColor: .windowBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+        .contentShape(Rectangle())
     }
 
     private func toolButton(tool: Tool, icon: String, tooltip: String) -> some View {
@@ -29,11 +30,12 @@ struct ToolbarView: View {
         } label: {
             Image(systemName: icon)
                 .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
                 .foregroundStyle(appState.activeTool == tool ? Color.accentColor : Color.secondary)
                 .background(appState.activeTool == tool ? Color.accentColor.opacity(0.15) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
         .help(tooltip)
     }
 }

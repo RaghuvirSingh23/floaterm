@@ -4,8 +4,8 @@ enum InputState {
     case idle
     case drawing(start: CGPoint)
     case panning(lastPoint: CGPoint)
-    case draggingBox(id: String, startWorld: CGPoint, origX: CGFloat, origY: CGFloat)
-    case resizingBox(id: String, handle: String, startWorld: CGPoint, origX: CGFloat, origY: CGFloat, origW: CGFloat, origH: CGFloat)
+    case draggingBox(id: String)
+    case resizingBox(id: String, handle: String, origX: CGFloat, origY: CGFloat, origW: CGFloat, origH: CGFloat, accumDx: CGFloat, accumDy: CGFloat)
     case annotating(type: ShapeType, start: CGPoint, points: [CGPoint])
     case draggingShape(id: UUID, startWorld: CGPoint, origX: CGFloat, origY: CGFloat)
 }
@@ -20,12 +20,13 @@ final class CanvasInputController {
     private var state: InputState = .idle
     private var shiftHeld = false
 
-    // MARK: - Mouse events
+    // MARK: - Canvas mouse events (from CanvasView)
 
     func mouseDown(with event: NSEvent, in view: NSView) {
         let loc = view.convert(event.locationInWindow, from: nil)
         let world = appState.transform.screenToWorld(sx: loc.x, sy: loc.y)
         shiftHeld = event.modifierFlags.contains(.shift)
+        print("[Input] mouseDown tool=\(appState.activeTool) loc=\(loc) world=\(world)")
 
         switch appState.activeTool {
         case .hand:
@@ -63,61 +64,11 @@ final class CanvasInputController {
             )
             canvasView?.drawPreview = rect
 
-        case .draggingBox(let id, _, let origX, let origY):
-            guard let idx = appState.boxIndex(id: id) else { return }
-            let world = appState.transform.screenToWorld(sx: loc.x, sy: loc.y)
-            let startWorld: CGPoint
-            if case .draggingBox(_, let sw, _, _) = state { startWorld = CGPoint(x: sw.x, y: sw.y) } else { return }
-            var newX = origX + (world.x - startWorld.x)
-            var newY = origY + (world.y - startWorld.y)
-            if !shiftHeld {
-                let snapResult = GridSnap.snapPoint(CGPoint(x: newX, y: newY))
-                if snapResult.snapped { GridSnap.hapticFeedback() }
-                newX = snapResult.point.x
-                newY = snapResult.point.y
-            }
-            appState.boxes[idx].x = newX
-            appState.boxes[idx].y = newY
-            onBoxChanged?()
-
-        case .resizingBox(let id, let handle, let startWorld, let origX, let origY, let origW, let origH):
-            guard let idx = appState.boxIndex(id: id) else { return }
-            let world = appState.transform.screenToWorld(sx: loc.x, sy: loc.y)
-            let dx = world.x - startWorld.x
-            let dy = world.y - startWorld.y
-            var (x, y, w, h) = (origX, origY, origW, origH)
-
-            if handle.contains("e") { w = max(Dimensions.minTerminalWidth, origW + dx) }
-            if handle.contains("w") { x = origX + dx; w = max(Dimensions.minTerminalWidth, origW - dx) }
-            if handle.contains("s") { h = max(Dimensions.minTerminalHeight, origH + dy) }
-            if handle.contains("n") { y = origY + dy; h = max(Dimensions.minTerminalHeight, origH - dy) }
-
-            if !shiftHeld {
-                let snapX = GridSnap.snap(x)
-                let snapY = GridSnap.snap(y)
-                let snapR = GridSnap.snap(x + w)
-                let snapB = GridSnap.snap(y + h)
-                if snapX.snapped || snapY.snapped || snapR.snapped || snapB.snapped {
-                    GridSnap.hapticFeedback()
-                }
-                if handle.contains("w") { x = snapX.value; w = origX + origW - x }
-                if handle.contains("n") { y = snapY.value; h = origY + origH - y }
-                if handle.contains("e") { w = snapR.value - x }
-                if handle.contains("s") { h = snapB.value - y }
-            }
-
-            appState.boxes[idx].x = x
-            appState.boxes[idx].y = y
-            appState.boxes[idx].w = max(Dimensions.minTerminalWidth, w)
-            appState.boxes[idx].h = max(Dimensions.minTerminalHeight, h)
-            onBoxChanged?()
-
         case .annotating(let type, let start, var points):
             if type == .freehand {
                 let world = appState.transform.screenToWorld(sx: loc.x, sy: loc.y)
                 points.append(CGPoint(x: world.x, y: world.y))
                 state = .annotating(type: type, start: start, points: points)
-                // Update canvas with freehand preview
                 canvasView?.needsDisplay = true
             } else {
                 let rect = NSRect(
@@ -135,7 +86,7 @@ final class CanvasInputController {
             canvasView?.shapes = appState.shapes
             onBoxChanged?()
 
-        case .idle:
+        default:
             break
         }
     }
@@ -208,18 +159,21 @@ final class CanvasInputController {
     // MARK: - Scroll (zoom + pan)
 
     func scrollWheel(with event: NSEvent, in view: NSView) {
+        print("[Input] scrollWheel scrollDeltaX=\(event.scrollingDeltaX) scrollDeltaY=\(event.scrollingDeltaY) cmd=\(event.modifierFlags.contains(.command)) opt=\(event.modifierFlags.contains(.option)) tool=\(appState.activeTool)")
         if event.modifierFlags.contains(.command) {
-            // Zoom
             let loc = view.convert(event.locationInWindow, from: nil)
             let factor: CGFloat = event.scrollingDeltaY > 0 ? 1.05 : 0.95
             appState.transform.zoom(factor: factor, centerX: loc.x, centerY: loc.y)
             canvasView?.transform = appState.transform
             onBoxChanged?()
+            print("[Input] zoom -> scale=\(appState.transform.scale)")
         } else if appState.activeTool == .hand || event.modifierFlags.contains(.option) {
-            // Pan
             appState.transform.pan(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY)
             canvasView?.transform = appState.transform
             onBoxChanged?()
+            print("[Input] pan -> offset=(\(appState.transform.offsetX), \(appState.transform.offsetY))")
+        } else {
+            print("[Input] scrollWheel IGNORED — tool=\(appState.activeTool), no cmd/opt modifier")
         }
     }
 
@@ -232,7 +186,6 @@ final class CanvasInputController {
         default: break
         }
 
-        // Delete selected shape
         if event.keyCode == 51 { // Backspace
             appState.shapes.removeAll { $0.selected }
             canvasView?.shapes = appState.shapes
@@ -240,19 +193,79 @@ final class CanvasInputController {
         }
     }
 
-    // MARK: - Box interaction (called from TerminalBoxController)
+    // MARK: - Box drag (from TitleBarView via TerminalBoxView)
+    // Uses event.deltaX/deltaY which are screen-direction pixel deltas — no coordinate space confusion.
 
-    func startDragBox(id: String, screenPoint: CGPoint) {
-        guard let box = appState.boxes.first(where: { $0.id == id }) else { return }
-        let world = appState.transform.screenToWorld(sx: screenPoint.x, sy: screenPoint.y)
-        state = .draggingBox(id: id, startWorld: CGPoint(x: world.x, y: world.y), origX: box.x, origY: box.y)
+    func startDragBox(id: String, windowPoint: NSPoint) {
+        shiftHeld = NSEvent.modifierFlags.contains(.shift)
         appState.focusBox(id: id)
+        state = .draggingBox(id: id)
     }
 
-    func startResizeBox(id: String, handle: String, screenPoint: CGPoint) {
+    func dragBoxMoved(with event: NSEvent) {
+        guard case .draggingBox(let id) = state else { return }
+        guard let idx = appState.boxIndex(id: id) else { return }
+
+        let dx = event.deltaX / appState.transform.scale
+        let dy = event.deltaY / appState.transform.scale
+        print("[Input] dragBoxMoved id=\(id) deltaX=\(event.deltaX) deltaY=\(event.deltaY) scale=\(appState.transform.scale) dx=\(dx) dy=\(dy)")
+
+        var newX = appState.boxes[idx].x + dx
+        var newY = appState.boxes[idx].y + dy
+
+        if !shiftHeld {
+            let snapResult = GridSnap.snapPoint(CGPoint(x: newX, y: newY))
+            if snapResult.snapped { GridSnap.hapticFeedback() }
+            newX = snapResult.point.x
+            newY = snapResult.point.y
+        }
+
+        appState.boxes[idx].x = newX
+        appState.boxes[idx].y = newY
+        onBoxChanged?()
+    }
+
+    func dragBoxEnded(with event: NSEvent) {
+        state = .idle
+        onBoxChanged?()
+    }
+
+    // MARK: - Box resize (from ResizeHandleView via TerminalBoxView)
+
+    func startResizeBox(id: String, handle: String, event: NSEvent) {
         guard let box = appState.boxes.first(where: { $0.id == id }) else { return }
-        let world = appState.transform.screenToWorld(sx: screenPoint.x, sy: screenPoint.y)
-        state = .resizingBox(id: id, handle: handle, startWorld: CGPoint(x: world.x, y: world.y), origX: box.x, origY: box.y, origW: box.w, origH: box.h)
+        shiftHeld = event.modifierFlags.contains(.shift)
+        state = .resizingBox(id: id, handle: handle, origX: box.x, origY: box.y, origW: box.w, origH: box.h, accumDx: 0, accumDy: 0)
+    }
+
+    func resizeBoxMoved(with event: NSEvent) {
+        guard case .resizingBox(let id, let handle, let origX, let origY, let origW, let origH, let prevDx, let prevDy) = state else { return }
+        guard let idx = appState.boxIndex(id: id) else { return }
+
+        let accumDx = prevDx + event.deltaX / appState.transform.scale
+        let accumDy = prevDy + event.deltaY / appState.transform.scale
+        state = .resizingBox(id: id, handle: handle, origX: origX, origY: origY, origW: origW, origH: origH, accumDx: accumDx, accumDy: accumDy)
+
+        var (x, y, w, h) = (origX, origY, origW, origH)
+
+        if handle.contains("e") { w = max(Dimensions.minTerminalWidth, origW + accumDx) }
+        if handle.contains("w") { x = origX + accumDx; w = max(Dimensions.minTerminalWidth, origW - accumDx) }
+        if handle.contains("s") { h = max(Dimensions.minTerminalHeight, origH + accumDy) }
+        if handle.contains("n") { y = origY + accumDy; h = max(Dimensions.minTerminalHeight, origH - accumDy) }
+
+        if w < Dimensions.minTerminalWidth && handle.contains("w") { x = origX + origW - Dimensions.minTerminalWidth; w = Dimensions.minTerminalWidth }
+        if h < Dimensions.minTerminalHeight && handle.contains("n") { y = origY + origH - Dimensions.minTerminalHeight; h = Dimensions.minTerminalHeight }
+
+        appState.boxes[idx].x = x
+        appState.boxes[idx].y = y
+        appState.boxes[idx].w = max(Dimensions.minTerminalWidth, w)
+        appState.boxes[idx].h = max(Dimensions.minTerminalHeight, h)
+        onBoxChanged?()
+    }
+
+    func resizeBoxEnded(with event: NSEvent) {
+        state = .idle
+        onBoxChanged?()
     }
 
     // MARK: - Helpers
