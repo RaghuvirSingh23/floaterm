@@ -90,6 +90,8 @@ const MIME = {
   '.html': 'text/html',
   '.js': 'application/javascript',
   '.css': 'text/css',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
 };
 
 const server = http.createServer((req, res) => {

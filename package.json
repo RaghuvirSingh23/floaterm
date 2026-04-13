@@ -7,7 +7,9 @@
     "floaterm": "bin/floaterm.js"
   },
   "scripts": {
-    "start": "node bin/floaterm.js"
+    "start": "node bin/floaterm.js",
+    "postinstall": "node scripts/patch-electron-plist.js",
+    "electron": "electron electron/main.js"
   },
   "keywords": ["terminal", "canvas", "multiplexer", "xterm", "pty"],
   "author": "Raghuvir Singh",
@@ -26,5 +28,8 @@
   "dependencies": {
     "node-pty": "^1.2.0-beta.12",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^35.0.1"
   }
 }
