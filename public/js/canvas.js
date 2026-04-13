@@ -41,7 +41,7 @@ export class Canvas {
 
   zoom(factor, cx, cy) {
     const before = this.screenToWorld(cx, cy);
-    this.scale = Math.max(0.2, Math.min(3, this.scale * factor));
+    this.scale = Math.max(0.05, Math.min(5, this.scale * factor));
     const after = this.screenToWorld(cx, cy);
     this.offsetX += (after.x - before.x) * this.scale;
     this.offsetY += (after.y - before.y) * this.scale;
@@ -52,10 +52,11 @@ export class Canvas {
     const ctx = this.ctx;
     const w = window.innerWidth;
     const h = window.innerHeight;
-    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
 
     // Draw dot grid
-    ctx.fillStyle = '#2a2a4a';
+    ctx.fillStyle = '#d0d0d0';
     const gridSize = this.gridSize * this.scale;
     if (gridSize > 8) {
       const startX = this.offsetX % gridSize;
@@ -72,7 +73,7 @@ export class Canvas {
     // Draw preview rect while drawing
     if (drawPreview) {
       const { x, y, w: pw, h: ph } = drawPreview;
-      ctx.strokeStyle = '#7c7cff';
+      ctx.strokeStyle = '#22C55E';
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(x, y, pw, ph);

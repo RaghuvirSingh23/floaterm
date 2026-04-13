@@ -75,7 +75,7 @@ export class TerminalManager {
       theme: {
         background: '#0f0f23',
         foreground: '#e0e0e0',
-        cursor: '#7c7cff',
+        cursor: '#22C55E',
         selectionBackground: '#3a3a6a',
       },
       allowProposedApi: true,
@@ -98,7 +98,7 @@ export class TerminalManager {
 
     // WebSocket connection
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${box.id}?cols=${term.cols}&rows=${term.rows}`);
+    const ws = new WebSocket(`${protocol}//${location.host}/ws/terminal/${encodeURIComponent(box.id)}?cols=${term.cols}&rows=${term.rows}`);
     ws.binaryType = 'arraybuffer';
 
     ws.addEventListener('open', () => {
@@ -129,19 +129,18 @@ export class TerminalManager {
     if (!box.domEl) return;
     const screen = canvas.worldToScreen(box.x, box.y);
     const el = box.domEl;
+    // Position at screen coords, but keep DOM size at world size (unscaled).
+    // Use CSS transform to apply zoom so xterm doesn't re-fit.
     el.style.left = screen.x + 'px';
     el.style.top = screen.y + 'px';
-    el.style.width = (box.w * canvas.scale) + 'px';
-    el.style.height = (box.h * canvas.scale) + 'px';
+    el.style.width = box.w + 'px';
+    el.style.height = box.h + 'px';
+    el.style.transformOrigin = '0 0';
+    el.style.transform = `scale(${canvas.scale})`;
   }
 
   updateAllPositions(boxes, canvas) {
-    boxes.forEach(box => {
-      this.updatePosition(box, canvas);
-      if (box._fitAddon) {
-        try { box._fitAddon.fit(); } catch {}
-      }
-    });
+    boxes.forEach(box => this.updatePosition(box, canvas));
   }
 
   destroy(box) {
@@ -149,5 +148,7 @@ export class TerminalManager {
     if (box.terminal) { box.terminal.dispose(); box.terminal = null; }
     if (box.domEl) { box.domEl.remove(); box.domEl = null; }
     box._fitAddon = null;
+    // Kill server-side session
+    fetch(`/api/session/${encodeURIComponent(box.id)}`, { method: 'DELETE' }).catch(() => {});
   }
 }

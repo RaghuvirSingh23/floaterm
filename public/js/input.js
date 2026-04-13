@@ -8,6 +8,7 @@ export class InputHandler {
     this.tm = terminalManager;
     this.onRender = onRender;
 
+    this.tool = 'draw'; // 'draw' | 'hand'
     this.mode = 'idle'; // idle | drawing | dragging | resizing | panning
     this.drawStart = null;
     this.drawPreview = null;
@@ -18,6 +19,28 @@ export class InputHandler {
     this.panStart = null;
 
     this._bind();
+    this._bindToolbar();
+  }
+
+  setTool(tool) {
+    this.tool = tool;
+    document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(`tool-${tool}`).classList.add('active');
+    this.canvasEl.classList.toggle('hand-mode', tool === 'hand');
+  }
+
+  _bindToolbar() {
+    document.getElementById('tool-draw').addEventListener('click', () => this.setTool('draw'));
+    document.getElementById('tool-hand').addEventListener('click', () => this.setTool('hand'));
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e) => {
+      // Don't intercept when typing in a terminal or label
+      if (e.target.closest('.term-content') || e.target.closest('.label-text') ||
+          e.target.closest('.xterm')) return;
+      if (e.key === 'd' || e.key === 'D') this.setTool('draw');
+      if (e.key === 'h' || e.key === 'H') this.setTool('hand');
+    });
   }
 
   _bind() {
@@ -37,15 +60,17 @@ export class InputHandler {
     const boxEl = e.target.closest('.terminal-box');
     if (!boxEl) return;
 
-    const boxId = parseInt(boxEl.dataset.boxId);
+    const boxId = boxEl.dataset.boxId;
     const box = this.boxStore.get(boxId);
     if (!box) return;
 
-    // Focus this terminal
+    // Focus this terminal and bring to front
     this.boxStore.focusBox(boxId);
     document.querySelectorAll('.terminal-box').forEach(el => {
       el.classList.toggle('focused', el === boxEl);
     });
+    // Move to end of DOM so it renders on top of siblings
+    boxEl.parentElement.appendChild(boxEl);
     if (box.terminal) box.terminal.focus();
     this.onRender();
 
@@ -78,23 +103,32 @@ export class InputHandler {
   }
 
   _onCanvasMouseDown(e) {
-    // Middle mouse or Alt+left = pan
+    // Middle mouse or Alt+left always pans regardless of tool
     if (e.button === 1 || (e.button === 0 && e.altKey)) {
       this.mode = 'panning';
       this.panStart = { x: e.clientX, y: e.clientY };
+      this.canvasEl.classList.add('grabbing');
       e.preventDefault();
       return;
     }
 
-    // Left click on canvas = start drawing
     if (e.button === 0) {
       // Unfocus all terminals
       this.boxStore.focusBox(-1);
       document.querySelectorAll('.terminal-box').forEach(el => el.classList.remove('focused'));
 
-      this.mode = 'drawing';
-      this.drawStart = { x: e.clientX, y: e.clientY };
-      this.drawPreview = null;
+      if (this.tool === 'hand') {
+        // Hand tool: pan
+        this.mode = 'panning';
+        this.panStart = { x: e.clientX, y: e.clientY };
+        this.canvasEl.classList.add('grabbing');
+        e.preventDefault();
+      } else {
+        // Draw tool: draw a new terminal box
+        this.mode = 'drawing';
+        this.drawStart = { x: e.clientX, y: e.clientY };
+        this.drawPreview = null;
+      }
       this.onRender();
     }
   }
@@ -170,6 +204,10 @@ export class InputHandler {
       }
     }
 
+    if (this.mode === 'panning') {
+      this.canvasEl.classList.remove('grabbing');
+    }
+
     this.mode = 'idle';
     this.dragBox = null;
     this.resizeBox = null;
@@ -179,7 +217,7 @@ export class InputHandler {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
       // Zoom
-      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+      const factor = e.deltaY > 0 ? 0.97 : 1.03;
       this.canvas.zoom(factor, e.clientX, e.clientY);
       this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
     } else {

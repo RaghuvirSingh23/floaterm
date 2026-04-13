@@ -8,6 +8,20 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 </head>
 <body>
+  <div id="toolbar">
+    <button id="tool-draw" class="tool-btn active" title="Draw terminal (D)">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="12" height="12" rx="2" stroke-dasharray="3 2"/>
+        <line x1="9" y1="1" x2="9" y2="5"/>
+        <line x1="7" y1="3" x2="11" y2="3"/>
+      </svg>
+    </button>
+    <button id="tool-hand" class="tool-btn" title="Hand tool (H)">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M9 2v10M6 5V3.5a1 1 0 0 1 2 0V2a1 1 0 0 1 2 0v1.5a1 1 0 0 1 2 0V5a1 1 0 0 1 2 0v5c0 3-2 5-5 5s-5-2-5-5V7a1 1 0 0 1 2 0"/>
+      </svg>
+    </button>
+  </div>
   <canvas id="canvas"></canvas>
   <div id="terminal-container"></div>
   <script type="module" src="/js/main.js"></script>
