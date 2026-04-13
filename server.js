@@ -10,6 +10,29 @@ const STATE_DIR = path.join(process.env.HOME, '.floaterm');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
 const SCROLLBACK_LIMIT = 50000; // chars to buffer per session
 
+// ── PTY environment ──────────────────────────────────────────────────
+// Strip parent-terminal identity vars so shell integrations (iTerm2,
+// Kitty, etc.) don't emit escape sequences that xterm.js can't handle.
+function makePtyEnv() {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (/^(ITERM|KITTY|KONSOLE|WEZTERM|WT|ALACRITTY)_/.test(key) ||
+        /^TERM_(PROGRAM|SESSION|FEATURES)/.test(key) ||
+        /^LC_TERMINAL/.test(key)) {
+      delete env[key];
+    }
+  }
+  delete env.__CFBundleIdentifier;
+  delete env.SECURITYSESSIONID;
+  delete env.TERMINFO_DIRS;
+  delete env.VTE_VERSION;
+  delete env.WINDOWID;
+  env.TERM = 'xterm-256color';
+  env.COLORTERM = 'truecolor';
+  env.TERM_PROGRAM = 'floaterm';
+  return env;
+}
+
 // ── Persistent PTY sessions ──────────────────────────────────────────
 // Sessions survive WebSocket disconnects. On reconnect, scrollback is replayed.
 const sessions = new Map(); // id -> { pty, scrollback, alive, cols, rows }
@@ -33,7 +56,7 @@ function getOrCreateSession(id, cols, rows) {
     cols,
     rows,
     cwd: process.env.HOME,
-    env: { ...process.env, TERM: 'xterm-256color' },
+    env: makePtyEnv(),
   });
 
   const session = { pty: ptyProcess, scrollback: '', alive: true, cols, rows, ws: null };
