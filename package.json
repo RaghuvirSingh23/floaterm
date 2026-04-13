@@ -2,7 +2,7 @@
   "name": "floaterm",
   "version": "0.1.0",
   "description": "Draw terminals on an infinite canvas",
-  "main": "server.js",
+  "main": "electron/main.js",
   "bin": {
     "floaterm": "bin/floaterm.js"
   },
@@ -53,6 +53,7 @@
     "directories": {
       "output": "dist"
     },
+    "asar": false,
     "files": [
       "server.js",
       "public/**/*",

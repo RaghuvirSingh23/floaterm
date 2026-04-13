@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, shell } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 
 app.name = 'floaterm';
 
@@ -10,18 +11,24 @@ let serverProcess;
 let win;
 
 function startServer() {
-  serverProcess = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
-    stdio: 'inherit',
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-  });
-}
+  const serverPath = path.join(__dirname, '..', 'server.js');
 
-function waitForServer(cb) {
-  const check = () => {
-    http.get(`http://localhost:${PORT}`, () => cb())
-      .on('error', () => setTimeout(check, 100));
-  };
-  check();
+  serverProcess = spawn(process.execPath, [serverPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      PORT: String(PORT),
+      SHELL: process.env.SHELL || '/bin/zsh',
+      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+      HOME: process.env.HOME || require('os').homedir(),
+    },
+  });
+
+  serverProcess.stdout.on('data', (d) => console.log('[server]', d.toString().trim()));
+  serverProcess.stderr.on('data', (d) => console.error('[server]', d.toString().trim()));
+  serverProcess.on('error', (e) => console.error('[server] spawn error:', e.message));
+  serverProcess.on('exit', (code) => console.log('[server] exited with code', code));
 }
 
 function createWindow() {
@@ -37,7 +44,6 @@ function createWindow() {
 
   win.loadURL(`http://localhost:${PORT}`);
 
-  // Open external links in browser
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -45,6 +51,12 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Clear macOS saved window state (prevents blank window from previous crashes)
+  try {
+    const savedStatePath = path.join(app.getPath('userData'), '..', '..', 'Saved Application State', 'com.raghuvirsingh.floaterm.savedState');
+    fs.rmSync(savedStatePath, { recursive: true, force: true });
+  } catch {}
+
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: app.name,
@@ -64,7 +76,23 @@ app.whenReady().then(() => {
   ]));
 
   startServer();
-  waitForServer(createWindow);
+
+  // Poll for server with 127.0.0.1 (not localhost) and timeout
+  const startTime = Date.now();
+  const check = () => {
+    http.get(`http://127.0.0.1:${PORT}`, (res) => {
+      res.resume();
+      createWindow();
+    }).on('error', () => {
+      if (Date.now() - startTime > 10000) {
+        console.error('Server failed to start within 10s');
+        app.quit();
+        return;
+      }
+      setTimeout(check, 200);
+    });
+  };
+  check();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
