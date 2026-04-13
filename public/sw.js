@@ -1,17 +1,6 @@
-const CACHE = 'floaterm-v1';
-const STATIC = [
-  '/',
-  '/css/style.css',
-  '/js/main.js',
-  '/js/canvas.js',
-  '/js/box.js',
-  '/js/input.js',
-  '/js/terminal-manager.js',
-  '/icon.svg',
-];
+const CACHE = 'floaterm-v2';
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(STATIC)));
   self.skipWaiting();
 });
 
@@ -30,12 +19,12 @@ self.addEventListener('fetch', (e) => {
   // Skip API calls and WebSocket upgrades — always network
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) return;
 
-  // Static assets: cache-first, fall back to network
+  // Network-first: try fresh, fall back to cache
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
+    fetch(e.request).then(res => {
       const clone = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, clone));
       return res;
-    }))
+    }).catch(() => caches.match(e.request))
   );
 });
