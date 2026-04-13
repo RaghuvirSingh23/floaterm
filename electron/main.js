@@ -100,8 +100,11 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (serverProcess) serverProcess.kill();
-  if (process.platform !== 'darwin') app.quit();
+  // On Mac, keep server alive so sessions persist when reopening from dock
+  if (process.platform !== 'darwin') {
+    if (serverProcess) serverProcess.kill();
+    app.quit();
+  }
 });
 
 app.on('before-quit', () => {
