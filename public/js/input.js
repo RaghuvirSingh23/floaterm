@@ -19,31 +19,13 @@ export class InputHandler {
     this.resizeDir = null;
     this.panStart = null;
 
-    // RAF batching — coalesce all renders to next animation frame
-    this._rafPending = false;
-
-    // Cached DOM references
-    this._toolBtns = null;
-
     this._bind();
     this._bindToolbar();
   }
 
-  _scheduleRender() {
-    if (this._rafPending) return;
-    this._rafPending = true;
-    requestAnimationFrame(() => {
-      this._rafPending = false;
-      this._onRender();
-    });
-  }
-
   setTool(tool) {
     this.tool = tool;
-    if (!this._toolBtns) {
-      this._toolBtns = Array.from(document.querySelectorAll('.tool-btn'));
-    }
-    this._toolBtns.forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
     document.getElementById(`tool-${tool}`)?.classList.add('active');
     this.canvasEl.classList.toggle('hand-mode', tool === 'hand');
   }
