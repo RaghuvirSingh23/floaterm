@@ -47,6 +47,31 @@ document.getElementById('zoom-reset').addEventListener('click', () => {
   saveState();
 });
 
+// ── Theme toggle ────────────────────────────────────────────────────
+const themeToggle = document.getElementById('theme-toggle');
+const sunIcon = document.getElementById('theme-icon-sun');
+const moonIcon = document.getElementById('theme-icon-moon');
+
+function setThemeUI(dark) {
+  document.documentElement.classList.toggle('dark', dark);
+  sunIcon.style.display = dark ? 'block' : 'none';
+  moonIcon.style.display = dark ? 'none' : 'block';
+}
+
+// Init from localStorage or system preference
+const stored = localStorage.getItem('floaterm-theme');
+if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+  setThemeUI(true);
+}
+
+themeToggle.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isDark = !document.documentElement.classList.contains('dark');
+  localStorage.setItem('floaterm-theme', isDark ? 'dark' : 'light');
+  setThemeUI(isDark);
+  render(); // repaint canvas dots with new theme colors
+});
+
 const inputHandler = new InputHandler(canvasEl, canvas, boxStore, terminalManager, () => {
   render();
   saveState();
@@ -60,7 +85,8 @@ function spawnInCenter() {
   const cy = window.innerHeight / 2;
   const w = 500;
   const h = 350;
-  const world = canvas.screenToWorld(cx - w / 2, cy - h / 2);
+  const offset = boxStore.boxes.length * 30;
+  const world = canvas.screenToWorld(cx - w / 2 + offset, cy - h / 2 + offset);
   const box = new Box(world.x, world.y, w / canvas.scale, h / canvas.scale);
   boxStore.add(box);
   boxStore.focusBox(box.id);
@@ -87,7 +113,8 @@ function spawnWithCommand(label, cmd) {
   const cy = window.innerHeight / 2;
   const w = 600;
   const h = 420;
-  const world = canvas.screenToWorld(cx - w / 2, cy - h / 2);
+  const offset = boxStore.boxes.length * 30;
+  const world = canvas.screenToWorld(cx - w / 2 + offset, cy - h / 2 + offset);
   const box = new Box(world.x, world.y, w / canvas.scale, h / canvas.scale, null, finalLabel);
   boxStore.add(box);
   boxStore.focusBox(box.id);

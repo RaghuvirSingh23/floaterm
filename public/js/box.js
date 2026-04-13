@@ -1,8 +1,18 @@
-let nextId = 1;
+let _boxes = []; // reference updated by BoxStore
+
+function lowestAvailableId() {
+  const used = new Set(_boxes.map(b => {
+    const m = String(b.id).match(/^t(\d+)$/);
+    return m ? parseInt(m[1]) : null;
+  }).filter(n => n !== null));
+  let i = 1;
+  while (used.has(i)) i++;
+  return i;
+}
 
 export class Box {
   constructor(x, y, w, h, id = null, label = null) {
-    this.id = id || `t${nextId++}`;
+    this.id = id || `t${lowestAvailableId()}`;
     this.x = x;
     this.y = y;
     this.w = Math.max(w, 300);
@@ -24,17 +34,13 @@ export class Box {
   }
 }
 
-// Ensure nextId doesn't collide with restored IDs
-export function updateNextId(boxes) {
-  for (const box of boxes) {
-    const m = String(box.id).match(/^t(\d+)$/);
-    if (m) nextId = Math.max(nextId, parseInt(m[1]) + 1);
-  }
-}
+// kept for backward compat — no-op now since lowestAvailableId reads live box list
+export function updateNextId(boxes) {}
 
 export class BoxStore {
   constructor() {
     this.boxes = [];
+    _boxes = this.boxes;
   }
 
   add(box) {

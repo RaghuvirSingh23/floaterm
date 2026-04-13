@@ -49,11 +49,12 @@ export class Canvas {
     const ctx = this.ctx;
     const w = window.innerWidth;
     const h = window.innerHeight;
-    ctx.fillStyle = '#ffffff';
+    const styles = getComputedStyle(document.documentElement);
+    ctx.fillStyle = styles.getPropertyValue('--canvas-bg').trim() || '#ffffff';
     ctx.fillRect(0, 0, w, h);
 
     // Draw dot grid
-    ctx.fillStyle = '#d0d0d0';
+    ctx.fillStyle = styles.getPropertyValue('--dot-color').trim() || '#d0d0d0';
     const gridSize = this.gridSize * this.scale;
     if (gridSize > 8) {
       const startX = this.offsetX % gridSize;
@@ -70,7 +71,7 @@ export class Canvas {
     // Draw preview rect while drawing
     if (drawPreview) {
       const { x, y, w: pw, h: ph } = drawPreview;
-      ctx.strokeStyle = '#22C55E';
+      ctx.strokeStyle = styles.getPropertyValue('--draw-preview').trim() || '#22C55E';
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.strokeRect(x, y, pw, ph);
