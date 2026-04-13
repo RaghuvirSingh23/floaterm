@@ -30,13 +30,6 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Generate icons
-        run: |
-          mkdir -p build
-          npm install --no-save sharp
-          node -e "require('sharp')('public/icon.svg').resize(1024,1024).png().toFile('build/icon.png')"
-        shell: bash
-
       - name: Create macOS .icns
         if: matrix.platform == 'mac'
         run: |

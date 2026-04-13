@@ -51,7 +51,7 @@ function getOrCreateSession(id, cols, rows) {
     sessions.delete(id);
   }
 
-  const ptyProcess = pty.spawn(SHELL, [], {
+  const ptyProcess = pty.spawn(SHELL, ['-l'], {
     name: 'xterm-256color',
     cols,
     rows,
