@@ -285,8 +285,19 @@ pub async fn start_server() {
         PathBuf::from("public")
     };
 
-    let static_files = warp::fs::dir(public_dir.clone())
-        .or(warp::path::end().and(warp::fs::file(public_dir.join("index.html"))));
+    let no_cache = warp::any()
+        .map(|| ())
+        .untuple_one()
+        .and(warp::header::optional::<String>("accept"))
+        .map(|_: Option<String>| ())
+        .untuple_one();
+
+    let static_dir = warp::fs::dir(public_dir.clone())
+        .map(|f: warp::fs::File| warp::reply::with_header(f, "Cache-Control", "no-cache, no-store, must-revalidate"));
+    let index = warp::path::end()
+        .and(warp::fs::file(public_dir.join("index.html")))
+        .map(|f: warp::fs::File| warp::reply::with_header(f, "Cache-Control", "no-cache, no-store, must-revalidate"));
+    let static_files = index.or(static_dir);
 
     // REST API: state
     let sessions_state = sessions.clone();
