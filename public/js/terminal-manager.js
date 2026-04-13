@@ -134,18 +134,25 @@ export class TerminalManager {
     if (!box.domEl) return;
     const screen = canvas.worldToScreen(box.x, box.y);
     const el = box.domEl;
-    // Position at screen coords, but keep DOM size at world size (unscaled).
-    // Use CSS transform to apply zoom so xterm doesn't re-fit.
+    const scaledW = box.w * canvas.scale;
+    const scaledH = box.h * canvas.scale;
     el.style.left = screen.x + 'px';
     el.style.top = screen.y + 'px';
-    el.style.width = box.w + 'px';
-    el.style.height = box.h + 'px';
-    el.style.transformOrigin = '0 0';
-    el.style.transform = `scale(${canvas.scale})`;
+    el.style.width = scaledW + 'px';
+    el.style.height = scaledH + 'px';
+    el.style.transform = '';
   }
 
   updateAllPositions(boxes, canvas) {
     boxes.forEach(box => this.updatePosition(box, canvas));
+  }
+
+  fitAll(boxes) {
+    boxes.forEach(box => {
+      if (box._fitAddon) {
+        try { box._fitAddon.fit(); } catch {}
+      }
+    });
   }
 
   destroy(box) {

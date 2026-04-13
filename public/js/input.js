@@ -227,6 +227,7 @@ export class InputHandler {
 
     if (this.mode === 'panning') {
       this.canvasEl.classList.remove('grabbing');
+      this.tm.fitAll(this.boxStore.boxes);
     }
 
     this.mode = 'idle';
@@ -244,5 +245,11 @@ export class InputHandler {
     }
     this.tm.updateAllPositions(this.boxStore.boxes, this.canvas);
     this.onRender();
+
+    // Debounce xterm fit after zoom/pan settles
+    clearTimeout(this._fitTimeout);
+    this._fitTimeout = setTimeout(() => {
+      this.tm.fitAll(this.boxStore.boxes);
+    }, 150);
   }
 }
