@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::{Mutex, RwLock};
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
@@ -17,7 +17,7 @@ struct PtySession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     scrollback: String,
-    alive: bool,
+    alive: Arc<AtomicBool>,
     clients: Vec<tokio::sync::mpsc::UnboundedSender<Message>>,
 }
 
@@ -50,18 +50,14 @@ fn get_or_create_session(
     rows: u16,
     command: Option<&str>,
 ) -> Arc<Mutex<PtySession>> {
-    // Check existing
+    // Check existing — use try_lock to avoid blocking in async context
     if let Some(session) = sessions.get(id) {
-        let s = session.blocking_lock();
-        if s.alive {
-            drop(s);
-            // Resize
-            if let Ok(()) = session.blocking_lock().master.resize(PtySize {
-                rows, cols, pixel_width: 0, pixel_height: 0,
-            }) {}
-            return session.clone();
+        if let Ok(mut s) = session.try_lock() {
+            if s.alive.load(Ordering::Relaxed) {
+                let _ = s.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+                return session.clone();
+            }
         }
-        drop(s);
         sessions.remove(id);
     }
 
@@ -94,11 +90,12 @@ fn get_or_create_session(
 
     let writer = pair.master.take_writer().expect("Failed to take PTY writer");
 
+    let alive = Arc::new(AtomicBool::new(true));
     let session = Arc::new(Mutex::new(PtySession {
         writer,
         master: pair.master,
         scrollback: String::new(),
-        alive: true,
+        alive: alive.clone(),
         clients: Vec::new(),
     }));
 
@@ -205,7 +202,7 @@ async fn handle_ws(
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => {
                     let mut s = session_for_reader.lock().await;
-                    s.alive = false;
+                    s.alive.store(false, Ordering::Relaxed);
                     for client in &s.clients {
                         let _ = client.send(Message::text("\r\n\x1b[90m[session ended]\x1b[0m\r\n"));
                     }
@@ -318,7 +315,9 @@ pub async fn start_server() {
                 let sess = sessions.read().await;
                 let alive: Vec<String> = sess
                     .iter()
-                    .filter(|(_, s)| s.blocking_lock().alive)
+                    .filter(|(_, s)| {
+                        s.try_lock().map(|s| s.alive.load(Ordering::Relaxed)).unwrap_or(false)
+                    })
                     .map(|(id, _)| id.clone())
                     .collect();
                 Ok::<_, warp::Rejection>(warp::reply::json(&alive))
@@ -335,7 +334,7 @@ pub async fn start_server() {
                 let mut sess = sessions.write().await;
                 if let Some(s) = sess.remove(&id) {
                     let mut s = s.lock().await;
-                    s.alive = false;
+                    s.alive.store(false, Ordering::Relaxed);
                     s.clients.clear();
                 }
                 Ok::<_, warp::Rejection>(warp::reply::with_status("ok", warp::http::StatusCode::OK))
