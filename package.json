@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node bin/floaterm.js",
+    "test": "node --test test/*.test.mjs",
     "postinstall": "node scripts/patch-electron-plist.js",
     "electron": "electron electron/main.js",
     "dist": "electron-builder",
