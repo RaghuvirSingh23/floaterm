@@ -30,10 +30,22 @@ function saveState() {
   }, 500);
 }
 
+const zoomIndicator = document.getElementById('zoom-indicator');
+
 function render() {
   canvas.render(boxStore.boxes, inputHandler?.drawPreview);
   updateTerminalList();
+  zoomIndicator.textContent = Math.round(canvas.scale * 100) + '%';
 }
+
+document.getElementById('zoom-reset').addEventListener('click', () => {
+  canvas.scale = 1;
+  canvas.offsetX = 0;
+  canvas.offsetY = 0;
+  terminalManager.updateAllPositions(boxStore.boxes, canvas);
+  render();
+  saveState();
+});
 
 const inputHandler = new InputHandler(canvasEl, canvas, boxStore, terminalManager, () => {
   render();
