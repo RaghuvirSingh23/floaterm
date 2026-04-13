@@ -16,7 +16,6 @@ export class Canvas {
     this.el.style.width = window.innerWidth + 'px';
     this.el.style.height = window.innerHeight + 'px';
     this.ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    this.render();
   }
 
   screenToWorld(sx, sy) {
@@ -36,7 +35,6 @@ export class Canvas {
   pan(dx, dy) {
     this.offsetX += dx;
     this.offsetY += dy;
-    this.render();
   }
 
   zoom(factor, cx, cy) {
@@ -45,7 +43,6 @@ export class Canvas {
     const after = this.screenToWorld(cx, cy);
     this.offsetX += (after.x - before.x) * this.scale;
     this.offsetY += (after.y - before.y) * this.scale;
-    this.render();
   }
 
   render(boxes = [], drawPreview = null) {
