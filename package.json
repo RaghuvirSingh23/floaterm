@@ -1,12 +1,28 @@
 {
   "name": "floaterm",
   "version": "0.1.0",
-  "private": true,
   "description": "Draw terminals on an infinite canvas",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
+  "bin": {
+    "floaterm": "bin/floaterm.js"
   },
+  "scripts": {
+    "start": "node bin/floaterm.js"
+  },
+  "keywords": ["terminal", "canvas", "multiplexer", "xterm", "pty"],
+  "author": "Raghuvir Singh",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RaghuvirSingh23/floaterm.git"
+  },
+  "files": [
+    "bin/",
+    "public/",
+    "server.js",
+    "LICENSE",
+    "README.md"
+  ],
   "dependencies": {
     "node-pty": "^1.2.0-beta.12",
     "ws": "^8.18.0"

@@ -4,7 +4,7 @@ const path = require('path');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
 
-const PORT = 2323;
+const PORT = parseInt(process.env.PORT) || 2323;
 const SHELL = process.env.SHELL || '/bin/zsh';
 const STATE_DIR = path.join(process.env.HOME, '.floaterm');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');

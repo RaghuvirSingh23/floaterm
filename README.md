@@ -21,13 +21,26 @@ Like Excalidraw, but instead of shapes you draw terminal windows. Each box spawn
 ## Quick start
 
 ```bash
+npx floaterm
+```
+
+Or install globally:
+
+```bash
+npm install -g floaterm
+floaterm
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/RaghuvirSingh23/floaterm.git
 cd floaterm
 npm install
 npm start
 ```
 
-Open **http://localhost:2323** and start drawing.
+Opens **http://localhost:2323** automatically.
 
 ## Controls
 
