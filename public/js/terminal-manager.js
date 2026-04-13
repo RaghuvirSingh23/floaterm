@@ -77,6 +77,7 @@ export class TerminalManager {
       cursorBlink: true,
       fontSize: 14,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      macOptionIsMeta: true,
       theme: {
         background: '#0f0f23',
         foreground: '#e0e0e0',
@@ -147,6 +148,18 @@ export class TerminalManager {
 
     ws.addEventListener('close', () => {
       term.write('\r\n\x1b[90m[session ended]\x1b[0m\r\n');
+    });
+
+    // Cmd+Backspace: delete to beginning of line (like native macOS).
+    // Option+Backspace is handled generically by macOptionIsMeta above.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || e.key !== 'Backspace') return true;
+      if (e.metaKey) {
+        e.preventDefault();
+        if (ws.readyState === WebSocket.OPEN) ws.send('\x15'); // Ctrl+U: kill line
+        return false;
+      }
+      return true;
     });
 
     box.ws = ws;
