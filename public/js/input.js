@@ -87,12 +87,12 @@ export class InputHandler {
     });
     boxEl.parentElement.appendChild(boxEl);
     if (box.terminal) box.terminal.focus();
-    this._scheduleRender();
+    this._onRender();
 
     if (e.target.classList.contains('close-btn')) {
       this.tm.destroy(box);
       this.boxStore.remove(boxId);
-      this._scheduleRender();
+      this._onRender();
       return;
     }
 
@@ -101,7 +101,8 @@ export class InputHandler {
       this.mode = 'resizing';
       this.resizeBox = box;
       this.resizeDir = e.target.dataset.dir || 'se';
-      this.resizeStart = { mx: e.clientX, my: e.clientY, x: box.x, y: box.y, w: box.w, h: box.h };
+      const mouseWorld = this.canvas.screenToWorld(e.clientX, e.clientY);
+      this.resizeStart = { wx: mouseWorld.x, wy: mouseWorld.y, x: box.x, y: box.y, w: box.w, h: box.h };
       return;
     }
 
@@ -109,8 +110,10 @@ export class InputHandler {
       e.preventDefault();
       this.mode = 'dragging';
       this.dragBox = box;
-      const screen = this.canvas.worldToScreen(box.x, box.y);
-      this.dragOffset = { x: e.clientX - screen.x, y: e.clientY - screen.y };
+      this._dragLogCount = 0;
+      const mouseWorld = this.canvas.screenToWorld(e.clientX, e.clientY);
+      this.dragOffset = { x: mouseWorld.x - box.x, y: mouseWorld.y - box.y };
+      console.log(`[drag START] mouse=(${e.clientX},${e.clientY}) mouseWorld=(${mouseWorld.x.toFixed(1)},${mouseWorld.y.toFixed(1)}) box=(${box.x.toFixed(1)},${box.y.toFixed(1)}) offset=(${this.dragOffset.x.toFixed(1)},${this.dragOffset.y.toFixed(1)}) scale=${this.canvas.scale}`);
       return;
     }
   }
@@ -138,7 +141,7 @@ export class InputHandler {
         this.drawStart = { x: e.clientX, y: e.clientY };
         this.drawPreview = null;
       }
-      this._scheduleRender();
+      this._onRender();
     }
   }
 
@@ -151,25 +154,23 @@ export class InputHandler {
       const w = Math.abs(e.clientX - this.drawStart.x);
       const h = Math.abs(e.clientY - this.drawStart.y);
       this.drawPreview = { x, y, w, h };
-      this._scheduleRender();
+      this._onRender();
       return;
     }
 
     if (this.mode === 'dragging' && this.dragBox) {
-      const world = this.canvas.screenToWorld(
-        e.clientX - this.dragOffset.x,
-        e.clientY - this.dragOffset.y
-      );
-      this.dragBox.x = world.x;
-      this.dragBox.y = world.y;
+      const mouseWorld = this.canvas.screenToWorld(e.clientX, e.clientY);
+      this.dragBox.x = mouseWorld.x - this.dragOffset.x;
+      this.dragBox.y = mouseWorld.y - this.dragOffset.y;
       this.tm.updatePosition(this.dragBox);
-      this._scheduleRender();
+      // NO canvas redraw during drag — grid doesn't move, only the box does
       return;
     }
 
     if (this.mode === 'resizing' && this.resizeBox) {
-      const dx = (e.clientX - this.resizeStart.mx) / this.canvas.scale;
-      const dy = (e.clientY - this.resizeStart.my) / this.canvas.scale;
+      const mouseWorld = this.canvas.screenToWorld(e.clientX, e.clientY);
+      const dx = mouseWorld.x - this.resizeStart.wx;
+      const dy = mouseWorld.y - this.resizeStart.wy;
       const dir = this.resizeDir;
       const s = this.resizeStart;
       const MIN_W = 300, MIN_H = 200;
@@ -188,8 +189,7 @@ export class InputHandler {
       }
 
       this.tm.updatePosition(this.resizeBox);
-      // Don't fit during resize — only on mouseup (avoids per-frame reflow)
-      this._scheduleRender();
+      // NO canvas redraw during resize — only the box changes
       return;
     }
 
@@ -199,8 +199,15 @@ export class InputHandler {
       this.panStart.x = e.clientX;
       this.panStart.y = e.clientY;
       this.canvas.pan(dx, dy);
-      this.tm.updateCamera(this.canvas);
-      this._scheduleRender();
+      this.tm.updateCamera(this.canvas); // instant — 1 DOM write
+      // Defer canvas redraw to RAF (grid dots are expensive)
+      if (!this._panRafPending) {
+        this._panRafPending = true;
+        requestAnimationFrame(() => {
+          this._panRafPending = false;
+          this._onRender();
+        });
+      }
     }
   }
 
@@ -223,7 +230,7 @@ export class InputHandler {
         });
       }
       this.drawPreview = null;
-      this._scheduleRender();
+      this._onRender();
     }
 
     if (this.mode === 'resizing' && this.resizeBox) {
@@ -250,7 +257,14 @@ export class InputHandler {
     } else {
       this.canvas.pan(-e.deltaX, -e.deltaY);
     }
-    this.tm.updateCamera(this.canvas);
-    this._scheduleRender();
+    this.tm.updateCamera(this.canvas); // instant
+    // Defer expensive canvas redraw
+    if (!this._wheelRafPending) {
+      this._wheelRafPending = true;
+      requestAnimationFrame(() => {
+        this._wheelRafPending = false;
+        this._onRender();
+      });
+    }
   }
 }
