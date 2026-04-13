@@ -31,6 +31,27 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Generate icons
+        run: |
+          mkdir -p build
+          npm install --no-save sharp
+          node -e "require('sharp')('public/icon.svg').resize(1024,1024).png().toFile('build/icon.png')"
+        shell: bash
+
+      - name: Create macOS .icns
+        if: matrix.platform == 'mac'
+        run: |
+          mkdir -p build/icon.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size build/icon.png --out build/icon.iconset/icon_${size}x${size}.png
+          done
+          for size in 16 32 128 256 512; do
+            s2=$((size*2))
+            sips -z $s2 $s2 build/icon.png --out build/icon.iconset/icon_${size}x${size}@2x.png
+          done
+          iconutil -c icns build/icon.iconset -o build/icon.icns
+          rm -rf build/icon.iconset
+
       - name: Build
         run: npm run dist:${{ matrix.platform }}
         env:

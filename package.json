@@ -16,7 +16,13 @@
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux"
   },
-  "keywords": ["terminal", "canvas", "multiplexer", "xterm", "pty"],
+  "keywords": [
+    "terminal",
+    "canvas",
+    "multiplexer",
+    "xterm",
+    "pty"
+  ],
   "author": {
     "name": "Raghuvir Singh",
     "email": "raghuvirsingh23@gmail.com"
@@ -57,15 +63,27 @@
       "package.json"
     ],
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.icns"
     },
     "win": {
-      "target": ["nsis", "zip"]
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "build/icon.png"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Development"
     },
     "nsis": {
