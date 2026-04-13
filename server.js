@@ -59,7 +59,7 @@ function getOrCreateSession(id, cols, rows) {
     env: makePtyEnv(),
   });
 
-  const session = { pty: ptyProcess, scrollback: '', alive: true, cols, rows, ws: null };
+  const session = { pty: ptyProcess, scrollback: '', alive: true, cols, rows, clients: new Set() };
 
   ptyProcess.onData((data) => {
     // Buffer scrollback
@@ -67,17 +67,18 @@ function getOrCreateSession(id, cols, rows) {
     if (session.scrollback.length > SCROLLBACK_LIMIT) {
       session.scrollback = session.scrollback.slice(-SCROLLBACK_LIMIT);
     }
-    // Forward to connected client
-    if (session.ws) {
-      try { session.ws.send(data); } catch {}
+    // Forward to all connected clients
+    for (const ws of session.clients) {
+      try { ws.send(data); } catch {}
     }
   });
 
   ptyProcess.onExit(() => {
     session.alive = false;
-    if (session.ws) {
-      try { session.ws.close(); } catch {}
+    for (const ws of session.clients) {
+      try { ws.close(); } catch {}
     }
+    session.clients.clear();
   });
 
   sessions.set(id, session);
@@ -212,11 +213,7 @@ server.on('upgrade', (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, (ws) => {
     const session = getOrCreateSession(id, cols, rows);
 
-    // Detach previous client if any
-    if (session.ws) {
-      try { session.ws.close(); } catch {}
-    }
-    session.ws = ws;
+    session.clients.add(ws);
 
     // Replay scrollback to new client
     if (session.scrollback) {
@@ -241,9 +238,7 @@ server.on('upgrade', (req, socket, head) => {
 
     ws.on('close', () => {
       // Don't kill the PTY — session stays alive for reconnect
-      if (session.ws === ws) {
-        session.ws = null;
-      }
+      session.clients.delete(ws);
     });
 
     // If session is already dead, notify client
