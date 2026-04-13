@@ -9,7 +9,11 @@
   "scripts": {
     "start": "node bin/floaterm.js",
     "postinstall": "node scripts/patch-electron-plist.js",
-    "electron": "electron electron/main.js"
+    "electron": "electron electron/main.js",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
   },
   "keywords": ["terminal", "canvas", "multiplexer", "xterm", "pty"],
   "author": "Raghuvir Singh",
@@ -30,6 +34,39 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "electron": "^35.0.1"
+    "electron": "^35.0.1",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "com.raghuvirsingh.floaterm",
+    "productName": "floaterm",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "server.js",
+      "public/**/*",
+      "electron/**/*",
+      "bin/**/*",
+      "scripts/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools",
+      "icon": "public/icon.svg"
+    },
+    "win": {
+      "target": ["nsis", "zip"]
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
   }
 }
