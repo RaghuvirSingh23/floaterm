@@ -49,8 +49,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Build the menu bar
         buildMenuBar()
 
-        // Content view
-        let contentView = FlippedView(frame: windowRect)
+        // Content view (standard NSView, NOT flipped — avoids hitTest coordinate hell)
+        let contentView = NSView(frame: windowRect)
         window.contentView = contentView
 
         // Layer 0: Canvas
@@ -109,7 +109,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .foregroundStyle(.secondary)
             .opacity(0.7)
         )
-        logoView.frame = NSRect(x: 16, y: 14, width: 120, height: 24)
+        logoView.frame = NSRect(x: 16, y: windowRect.height - 14 - 24, width: 120, height: 24)
+        logoView.autoresizingMask = [.maxXMargin, .minYMargin]
         logoView.wantsLayer = true
         logoView.layer?.backgroundColor = .clear
         contentView.addSubview(logoView)
@@ -220,7 +221,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func frameForBox(_ box: TerminalBox) -> NSRect {
         let screen = appState.transform.worldToScreen(wx: box.x, wy: box.y)
-        return NSRect(x: screen.x, y: screen.y, width: box.w, height: box.h)
+        // In unflipped coords, Y is from bottom. World Y increases downward.
+        // So screen.y needs to be flipped: windowHeight - screen.y - scaledHeight
+        let windowHeight = window.contentView?.bounds.height ?? Dimensions.defaultWindowHeight
+        let scaledH = box.h * appState.transform.scale
+        return NSRect(x: screen.x, y: windowHeight - screen.y - scaledH, width: box.w, height: box.h)
     }
 
     // MARK: - Actions
@@ -347,11 +352,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var origin: NSPoint
         switch alignment {
         case .topCenter:
-            origin = NSPoint(x: (parentBounds.width - fittingSize.width) / 2, y: 12)
+            // Unflipped: y=0 is bottom, so top = height - margin - size
+            origin = NSPoint(x: (parentBounds.width - fittingSize.width) / 2, y: parentBounds.height - fittingSize.height - 12)
         case .topRight:
-            origin = NSPoint(x: parentBounds.width - fittingSize.width - 16, y: 12)
+            origin = NSPoint(x: parentBounds.width - fittingSize.width - 16, y: parentBounds.height - fittingSize.height - 12)
         case .bottomLeft:
-            origin = NSPoint(x: 16, y: parentBounds.height - fittingSize.height - 12)
+            origin = NSPoint(x: 16, y: 12)
         }
 
         hosting.frame = NSRect(origin: origin, size: fittingSize)
@@ -359,11 +365,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Auto-resize with superview
         switch alignment {
         case .topCenter:
-            hosting.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
+            hosting.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
         case .topRight:
-            hosting.autoresizingMask = [.minXMargin, .maxYMargin]
+            hosting.autoresizingMask = [.minXMargin, .minYMargin]
         case .bottomLeft:
-            hosting.autoresizingMask = [.maxXMargin, .minYMargin]
+            hosting.autoresizingMask = [.maxXMargin, .maxYMargin]
         }
 
         parent.addSubview(hosting)
@@ -384,12 +390,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("[TEST] Transform: offset=(\(appState.transform.offsetX), \(appState.transform.offsetY)) scale=\(appState.transform.scale)")
 
         // Test hitTest at various points
+        // Unflipped: y=0 is bottom, y=800 is top
+        let h = bounds.height
         let testPoints: [(String, NSPoint)] = [
             ("center", NSPoint(x: 600, y: 400)),
-            ("top-left canvas", NSPoint(x: 100, y: 100)),
-            ("toolbar area", NSPoint(x: 600, y: 20)),
-            ("zoom bar area", NSPoint(x: 50, y: 780)),
-            ("quick spawn area", NSPoint(x: 1100, y: 20)),
+            ("top-left canvas", NSPoint(x: 100, y: h - 100)),
+            ("toolbar area (top center)", NSPoint(x: 600, y: h - 25)),
+            ("zoom bar area (bottom left)", NSPoint(x: 50, y: 20)),
+            ("quick spawn area (top right)", NSPoint(x: 1100, y: h - 25)),
         ]
         for (label, pt) in testPoints {
             let hit = window.contentView?.hitTest(pt)
@@ -479,13 +487,8 @@ private class FlippedView: NSView {
 /// so we force it to accept events, letting SwiftUI handle routing internally.
 private class ClickableHostingView<Content: View>: NSHostingView<Content> {
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // hitTest point is in UNFLIPPED superview coords (origin bottom-left)
-        // But our frame is in FLIPPED coords (origin top-left) because superview.isFlipped = true
-        // Need to flip the point's Y to match our frame's coordinate space
-        guard let sv = superview else { return nil }
-        let flippedY = sv.bounds.height - point.y
-        let flippedPoint = NSPoint(x: point.x, y: flippedY)
-        if frame.contains(flippedPoint) {
+        // Both point and frame are in the same unflipped coordinate space now
+        if frame.contains(point) {
             return self
         }
         return nil
@@ -494,7 +497,6 @@ private class ClickableHostingView<Content: View>: NSHostingView<Content> {
 
 /// An NSView that passes through mouse events when no child is hit
 private class PassthroughView: NSView {
-    override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
         let result = super.hitTest(point)
         return result === self ? nil : result
