@@ -321,6 +321,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #ffffff; }
   flex: 1;
   overflow: hidden;
 }
+.terminal-box .xterm-viewport::-webkit-scrollbar {
+  width: 0px !important;
+  background: transparent !important;
+}
+.terminal-box .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent !important;
+}
+.terminal-box .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent !important;
+}
 
 .terminal-box .resize-handle {
   position: absolute;
