@@ -1,4 +1,5 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use rust_embed::Embed;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -10,6 +11,11 @@ use warp::Filter;
 use futures_util::{SinkExt, StreamExt};
 
 const SCROLLBACK_LIMIT: usize = 50_000;
+
+// Embed the public/ directory into the binary at compile time
+#[derive(Embed)]
+#[folder = "../public/"]
+struct PublicAssets;
 
 // ── PTY Session ─────────────────────────────────────────────────────
 
@@ -271,33 +277,36 @@ async fn handle_ws(
 pub async fn start_server() {
     let sessions: Sessions = Arc::new(RwLock::new(HashMap::new()));
 
-    // Serve static files from public/
-    let public_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_default()
-        .join("../../../public");
-
-    // Fallback to relative path for dev
-    let public_dir = if public_dir.exists() {
-        public_dir
-    } else {
-        PathBuf::from("public")
-    };
-
-    let no_cache = warp::any()
-        .map(|| ())
-        .untuple_one()
-        .and(warp::header::optional::<String>("accept"))
-        .map(|_: Option<String>| ())
-        .untuple_one();
-
-    let static_dir = warp::fs::dir(public_dir.clone())
-        .map(|f: warp::fs::File| warp::reply::with_header(f, "Cache-Control", "no-cache, no-store, must-revalidate"));
-    let index = warp::path::end()
-        .and(warp::fs::file(public_dir.join("index.html")))
-        .map(|f: warp::fs::File| warp::reply::with_header(f, "Cache-Control", "no-cache, no-store, must-revalidate"));
-    let static_files = index.or(static_dir);
+    // Serve embedded static files (compiled into binary)
+    let static_files = warp::path::tail().and_then(|tail: warp::path::Tail| async move {
+        let path = tail.as_str();
+        let path = if path.is_empty() { "index.html" } else { path };
+        match PublicAssets::get(path) {
+            Some(content) => {
+                let mime = mime_guess::from_path(path).first_or_octet_stream();
+                Ok(warp::reply::with_header(
+                    warp::reply::with_header(
+                        warp::reply::with_status(content.data.to_vec(), warp::http::StatusCode::OK),
+                        "Content-Type", mime.as_ref(),
+                    ),
+                    "Cache-Control", "no-cache, no-store, must-revalidate",
+                ))
+            }
+            None => Err(warp::reject::not_found()),
+        }
+    });
+    let index = warp::path::end().and_then(|| async {
+        match PublicAssets::get("index.html") {
+            Some(content) => Ok(warp::reply::with_header(
+                warp::reply::with_header(
+                    warp::reply::with_status(content.data.to_vec(), warp::http::StatusCode::OK),
+                    "Content-Type", "text/html",
+                ),
+                "Cache-Control", "no-cache, no-store, must-revalidate",
+            )),
+            None => Err(warp::reject::not_found()),
+        }
+    });
 
     // REST API: state
     let sessions_state = sessions.clone();
@@ -376,6 +385,7 @@ pub async fn start_server() {
         .or(get_sessions)
         .or(delete_session)
         .or(get_ssh_hosts)
+        .or(index)
         .or(static_files);
 
     eprintln!("floaterm running at http://localhost:2323");
