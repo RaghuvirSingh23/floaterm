@@ -29,6 +29,40 @@ struct PtySession {
 
 type Sessions = Arc<RwLock<HashMap<String, Arc<Mutex<PtySession>>>>>;
 
+fn detect_shell() -> String {
+    // 1. Try $SHELL env var
+    if let Ok(s) = std::env::var("SHELL") {
+        if !s.is_empty() && std::path::Path::new(&s).exists() {
+            return s;
+        }
+    }
+
+    // 2. Try getpwuid to get user's login shell from /etc/passwd
+    #[cfg(unix)]
+    unsafe {
+        let uid = libc::getuid();
+        let pw = libc::getpwuid(uid);
+        if !pw.is_null() {
+            let shell_ptr = (*pw).pw_shell;
+            if !shell_ptr.is_null() {
+                let shell = std::ffi::CStr::from_ptr(shell_ptr).to_string_lossy().to_string();
+                if !shell.is_empty() && std::path::Path::new(&shell).exists() {
+                    return shell;
+                }
+            }
+        }
+    }
+
+    // 3. Try common shells in order
+    for candidate in ["/bin/zsh", "/bin/bash", "/bin/sh"] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate.to_string();
+        }
+    }
+
+    "/bin/sh".to_string()
+}
+
 fn make_pty_env() -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = Vec::new();
     for (key, val) in std::env::vars() {
@@ -46,6 +80,29 @@ fn make_pty_env() -> Vec<(String, String)> {
     env.push(("TERM".into(), "xterm-256color".into()));
     env.push(("COLORTERM".into(), "truecolor".into()));
     env.push(("TERM_PROGRAM".into(), "floaterm".into()));
+
+    // Critical vars when launched from Finder (minimal env)
+    let has_home = env.iter().any(|(k, _)| k == "HOME");
+    let has_path = env.iter().any(|(k, _)| k == "PATH");
+    let has_user = env.iter().any(|(k, _)| k == "USER");
+    if !has_home {
+        if let Some(home) = dirs::home_dir() {
+            env.push(("HOME".into(), home.to_string_lossy().to_string()));
+        }
+    }
+    if !has_path {
+        env.push(("PATH".into(), "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin".into()));
+    }
+    if !has_user {
+        #[cfg(unix)]
+        unsafe {
+            let pw = libc::getpwuid(libc::getuid());
+            if !pw.is_null() {
+                let name = std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().to_string();
+                env.push(("USER".into(), name));
+            }
+        }
+    }
     env
 }
 
@@ -72,7 +129,9 @@ fn get_or_create_session(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .expect("Failed to open PTY");
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let shell = detect_shell();
+    eprintln!("[pty] spawning shell: {}", shell);
+
     let mut cmd = if let Some(c) = command {
         let mut cb = CommandBuilder::new(&shell);
         cb.args(["-l", "-c", c]);
@@ -91,8 +150,32 @@ fn get_or_create_session(
         cmd.cwd(home);
     }
 
-    let _child = pair.slave.spawn_command(cmd).expect("Failed to spawn shell");
-    drop(pair.slave); // close slave side in parent
+    match pair.slave.spawn_command(cmd) {
+        Ok(_child) => {
+            eprintln!("[pty] shell spawned: {}", shell);
+        }
+        Err(e) => {
+            eprintln!("[pty] FAILED to spawn {} with -l: {}. Trying without login flag...", shell, e);
+            let mut retry = CommandBuilder::new(&shell);
+            for (key, val) in make_pty_env() {
+                retry.env(key, val);
+            }
+            if let Some(home) = dirs::home_dir() {
+                retry.cwd(home);
+            }
+            if let Err(e2) = pair.slave.spawn_command(retry) {
+                eprintln!("[pty] Retry failed: {}. Falling back to /bin/sh", e2);
+                let mut fallback = CommandBuilder::new("/bin/sh");
+                for (key, val) in make_pty_env() {
+                    fallback.env(key, val);
+                }
+                if let Err(e3) = pair.slave.spawn_command(fallback) {
+                    eprintln!("[pty] /bin/sh ALSO failed: {}", e3);
+                }
+            }
+        }
+    }
+    drop(pair.slave);
 
     let writer = pair.master.take_writer().expect("Failed to take PTY writer");
 

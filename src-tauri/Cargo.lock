@@ -803,6 +803,7 @@ version = "2.0.0"
 dependencies = [
  "dirs",
  "futures-util",
+ "libc",
  "mime_guess",
  "portable-pty",
  "rust-embed",
