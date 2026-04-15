@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <link rel="stylesheet" href="xterm.css" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --panel-bg: #070a10;
+        --panel-border: rgba(255, 255, 255, 0.06);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at top, rgba(64, 224, 208, 0.06), transparent 42%),
+          linear-gradient(180deg, #0a0f17 0%, #06090e 100%);
+        color: #eff5ff;
+      }
+
+      body {
+        border: 1px solid var(--panel-border);
+        border-radius: 14px;
+        font-family: "SF Mono", Menlo, Monaco, monospace;
+      }
+
+      #terminal {
+        width: 100%;
+        height: 100%;
+        padding: 10px 12px 12px;
+      }
+
+      .xterm {
+        height: 100%;
+      }
+
+      .xterm-viewport {
+        overflow: hidden !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="terminal"></div>
+
+    <script src="xterm.js"></script>
+    <script src="addon-fit.js"></script>
+    <script>
+      const container = document.getElementById("terminal");
+      const term = new Terminal({
+        allowTransparency: true,
+        cursorBlink: true,
+        cursorStyle: "block",
+        fontFamily: '"SF Mono", Menlo, Monaco, monospace',
+        fontSize: 13,
+        letterSpacing: 0.2,
+        lineHeight: 1.15,
+        macOptionIsMeta: true,
+        scrollback: 6000,
+        theme: {
+          background: "#00000000",
+          foreground: "#ecf4ff",
+          cursor: "#4de5bf",
+          selectionBackground: "rgba(77, 229, 191, 0.22)",
+          black: "#0e131c",
+          red: "#ff7b72",
+          green: "#42d392",
+          yellow: "#f2cc60",
+          blue: "#7eb6ff",
+          magenta: "#d29cff",
+          cyan: "#49dbe6",
+          white: "#d7e3f5",
+          brightBlack: "#4e5a6f",
+          brightRed: "#ffb2af",
+          brightGreen: "#8effcb",
+          brightYellow: "#ffe6a7",
+          brightBlue: "#b7d5ff",
+          brightMagenta: "#efcbff",
+          brightCyan: "#8cf6ff",
+          brightWhite: "#f8fbff"
+        }
+      });
+      const fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(container);
+
+      const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
+
+      function post(message) {
+        const handler = window.webkit?.messageHandlers?.terminal;
+        if (handler) {
+          handler.postMessage(message);
+        }
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = "";
+        for (const byte of bytes) {
+          binary += String.fromCharCode(byte);
+        }
+        return btoa(binary);
+      }
+
+      function base64ToBytes(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
+      }
+
+      function fit() {
+        fitAddon.fit();
+        post({ type: "resize", cols: term.cols, rows: term.rows });
+      }
+
+      term.onData((data) => {
+        post({ type: "input", data: bytesToBase64(encoder.encode(data)) });
+      });
+
+      term.onKey(() => {
+        term.focus();
+      });
+
+      const resizeObserver = new ResizeObserver(() => {
+        window.requestAnimationFrame(fit);
+      });
+      resizeObserver.observe(document.body);
+
+      document.addEventListener("mousedown", () => term.focus());
+      window.addEventListener("focus", () => term.focus());
+
+      window.termBridge = {
+        focus() {
+          term.focus();
+        },
+        fit,
+        markExited() {
+          term.write("\r\n\x1b[90m[terminal exited]\x1b[0m\r\n");
+        },
+        writeBase64(base64) {
+          term.write(base64ToBytes(base64));
+        }
+      };
+
+      window.requestAnimationFrame(() => {
+        fit();
+        term.focus();
+        post({ type: "ready" });
+      });
+    </script>
+  </body>
+</html>
