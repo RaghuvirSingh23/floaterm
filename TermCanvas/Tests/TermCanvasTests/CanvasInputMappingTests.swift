@@ -20,8 +20,8 @@ final class CanvasInputMappingTests: XCTestCase {
         let gesture = CGPoint(x: 15, y: 20)
         let pan = CanvasInputMapping.panDelta(for: gesture)
 
-        XCTAssertEqual(pan.x, -15, accuracy: 0.0001)
-        XCTAssertEqual(pan.y, 20, accuracy: 0.0001)
+        XCTAssertEqual(pan.x, 15, accuracy: 0.0001)
+        XCTAssertEqual(pan.y, -20, accuracy: 0.0001)
     }
 
     func testMouseDragDeltaFlipsVerticalAxisOnly() {

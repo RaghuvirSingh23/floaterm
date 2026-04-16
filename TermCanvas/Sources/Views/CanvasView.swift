@@ -23,6 +23,7 @@ final class CanvasViewportView: NSView {
     }
 
     private weak var store: CanvasStore?
+    private let worldView = NSView()
     private var nodeViews: [UUID: TerminalNodeView] = [:]
     private var interaction: Interaction?
     private var previewWorldRect: CGRect?
@@ -35,6 +36,8 @@ final class CanvasViewportView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        worldView.autoresizingMask = [.width, .height]
+        addSubview(worldView)
     }
 
     required init?(coder: NSCoder) {
@@ -60,6 +63,7 @@ final class CanvasViewportView: NSView {
             hasBootstrappedCamera = true
         }
 
+        updateWorldViewTransform()
         syncNodeViews()
         needsDisplay = true
     }
@@ -73,6 +77,7 @@ final class CanvasViewportView: NSView {
             hasBootstrappedCamera = true
         }
 
+        updateWorldViewTransform()
         syncNodeViews()
         needsDisplay = true
     }
@@ -94,7 +99,7 @@ final class CanvasViewportView: NSView {
         drawGrid(camera: store.camera, in: dirtyRect)
 
         if let previewWorldRect {
-            let previewRect = CanvasGeometry.worldToScreen(previewWorldRect, camera: store.camera)
+            let previewRect = worldView.convert(previewWorldRect, to: self)
             let previewPath = NSBezierPath(roundedRect: previewRect, xRadius: 18, yRadius: 18)
             NSColor.systemMint.withAlphaComponent(0.14).setFill()
             previewPath.fill()
@@ -124,7 +129,7 @@ final class CanvasViewportView: NSView {
             store.selectNode(nil)
         case .terminal:
             interaction = .creating(startScreen: location, currentScreen: location)
-            previewWorldRect = CanvasGeometry.normalizedWorldRect(from: location, to: location, camera: store.camera)
+            previewWorldRect = normalizedWorldRect(from: location, to: location)
             needsDisplay = true
         }
     }
@@ -140,9 +145,10 @@ final class CanvasViewportView: NSView {
         case let .panning(anchor, initialPan):
             let delta = CGPoint(x: location.x - anchor.x, y: location.y - anchor.y)
             store.setPan(CGPoint(x: initialPan.x + delta.x, y: initialPan.y + delta.y))
+            updateWorldViewTransform()
         case let .creating(startScreen, _):
             self.interaction = .creating(startScreen: startScreen, currentScreen: location)
-            previewWorldRect = CanvasGeometry.normalizedWorldRect(from: startScreen, to: location, camera: store.camera)
+            previewWorldRect = normalizedWorldRect(from: startScreen, to: location)
         }
 
         needsDisplay = true
@@ -170,10 +176,10 @@ final class CanvasViewportView: NSView {
         case .panning:
             return
         case let .creating(startScreen, currentScreen):
-            var frame = CanvasGeometry.normalizedWorldRect(from: startScreen, to: currentScreen, camera: store.camera)
+            var frame = normalizedWorldRect(from: startScreen, to: currentScreen)
 
             if frame.width < 24 || frame.height < 24 {
-                let worldPoint = CanvasGeometry.screenToWorld(currentScreen, camera: store.camera)
+                let worldPoint = worldPoint(fromScreenPoint: currentScreen)
                 frame = CGRect(
                     x: worldPoint.x - CanvasGeometry.defaultNodeSize.width * 0.5,
                     y: worldPoint.y - CanvasGeometry.defaultNodeSize.height * 0.5,
@@ -221,6 +227,9 @@ final class CanvasViewportView: NSView {
         } else {
             store.panBy(CanvasInputMapping.panDelta(for: gestureDelta))
         }
+
+        updateWorldViewTransform()
+        needsDisplay = true
     }
 
     override func magnify(with event: NSEvent) {
@@ -230,6 +239,8 @@ final class CanvasViewportView: NSView {
 
         let location = convert(event.locationInWindow, from: nil)
         store.zoom(by: 1 + event.magnification, around: location)
+        updateWorldViewTransform()
+        needsDisplay = true
     }
 
     override func keyDown(with event: NSEvent) {
@@ -312,7 +323,7 @@ final class CanvasViewportView: NSView {
                     self?.store?.selectNode(node.id)
                     created?.focusTerminal()
                 }
-                addSubview(created)
+                worldView.addSubview(created)
                 nodeViews[node.id] = created
                 view = created
             }
@@ -323,7 +334,7 @@ final class CanvasViewportView: NSView {
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            view.frame = CanvasGeometry.worldToScreen(node.frame, camera: store.camera)
+            view.frame = node.frame
             CATransaction.commit()
         }
     }
@@ -331,8 +342,8 @@ final class CanvasViewportView: NSView {
     private func drawGrid(camera: CanvasCamera, in dirtyRect: NSRect) {
         let step = CanvasGeometry.adaptiveGridStep(for: camera)
         let majorStep = step * 4
-        let visibleMinWorld = CanvasGeometry.screenToWorld(CGPoint(x: dirtyRect.minX, y: dirtyRect.minY), camera: camera)
-        let visibleMaxWorld = CanvasGeometry.screenToWorld(CGPoint(x: dirtyRect.maxX, y: dirtyRect.maxY), camera: camera)
+        let visibleMinWorld = worldView.bounds.origin
+        let visibleMaxWorld = CGPoint(x: worldView.bounds.maxX, y: worldView.bounds.maxY)
 
         drawGridLines(
             from: visibleMinWorld,
@@ -383,6 +394,40 @@ final class CanvasViewportView: NSView {
         color.setStroke()
         path.stroke()
     }
+
+    private func updateWorldViewTransform() {
+        guard let store, !bounds.size.equalTo(.zero) else {
+            return
+        }
+
+        worldView.frame = bounds
+        worldView.bounds = CGRect(
+            origin: CGPoint(
+                x: -store.camera.pan.x / store.camera.zoom,
+                y: -store.camera.pan.y / store.camera.zoom
+            ),
+            size: CGSize(
+                width: bounds.width / store.camera.zoom,
+                height: bounds.height / store.camera.zoom
+            )
+        )
+    }
+
+    private func worldPoint(fromScreenPoint point: CGPoint) -> CGPoint {
+        worldView.convert(point, from: self)
+    }
+
+    private func normalizedWorldRect(from startScreen: CGPoint, to endScreen: CGPoint) -> CGRect {
+        let startWorld = worldPoint(fromScreenPoint: startScreen)
+        let endWorld = worldPoint(fromScreenPoint: endScreen)
+
+        return CGRect(
+            x: min(startWorld.x, endWorld.x),
+            y: min(startWorld.y, endWorld.y),
+            width: abs(endWorld.x - startWorld.x),
+            height: abs(endWorld.y - startWorld.y)
+        )
+    }
 }
 
 final class TerminalNodeView: NSView {
@@ -392,10 +437,7 @@ final class TerminalNodeView: NSView {
     var onChromeActivation: (() -> Void)?
     var onTerminalActivation: (() -> Void)?
 
-    var title: String {
-        get { titleField.stringValue }
-        set { titleField.stringValue = newValue }
-    }
+    var title = ""
 
     var isSelected = false {
         didSet {
@@ -403,13 +445,13 @@ final class TerminalNodeView: NSView {
         }
     }
 
-    private let headerHeight: CGFloat = 36
-    private let contentInset: CGFloat = 10
+    private let dragStripHeight: CGFloat = 18
+    private let closeButtonInset: CGFloat = 4
+    private let closeButtonSize: CGFloat = 14
     private let edgeHandleThickness: CGFloat = 10
     private let cornerHandleSize: CGFloat = 18
 
-    private let headerView = DragHeaderView()
-    private let titleField = NSTextField(labelWithString: "")
+    private let dragStripView = DragHeaderView()
     private let closeButton = NSButton()
     private let terminalView = TerminalWebView()
     private lazy var handles: [ResizeHandle: ResizeHandleView] = ResizeHandle.allCases.reduce(into: [:]) { result, handle in
@@ -425,19 +467,11 @@ final class TerminalNodeView: NSView {
 
     init(title: String) {
         super.init(frame: .zero)
+        self.title = title
 
         wantsLayer = true
-        layer?.cornerRadius = 20
-        layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowOffset = CGSize(width: 0, height: -10)
-        layer?.shadowRadius = 18
-        layer?.shadowOpacity = 0.22
+        layer?.cornerRadius = 0
         layer?.masksToBounds = false
-
-        titleField.stringValue = title
-        titleField.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
-        titleField.textColor = .white
-        titleField.lineBreakMode = .byTruncatingTail
 
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close terminal")
@@ -446,11 +480,13 @@ final class TerminalNodeView: NSView {
         closeButton.target = self
         closeButton.action = #selector(handleClose)
         closeButton.toolTip = "Close terminal"
+        closeButton.imageScaling = .scaleProportionallyDown
+        closeButton.isHidden = true
 
-        headerView.onActivate = { [weak self] in
+        dragStripView.onActivate = { [weak self] in
             self?.onChromeActivation?()
         }
-        headerView.onDrag = { [weak self] delta in
+        dragStripView.onDrag = { [weak self] delta in
             self?.onMove?(delta)
         }
 
@@ -459,9 +495,8 @@ final class TerminalNodeView: NSView {
         }
 
         addSubview(terminalView)
-        addSubview(headerView)
-        headerView.addSubview(titleField)
-        headerView.addSubview(closeButton)
+        addSubview(dragStripView)
+        addSubview(closeButton)
 
         for handleView in handles.values {
             addSubview(handleView)
@@ -477,27 +512,19 @@ final class TerminalNodeView: NSView {
     override func layout() {
         super.layout()
 
-        let headerRect = CGRect(
-            x: contentInset,
-            y: bounds.height - headerHeight - contentInset,
-            width: bounds.width - (contentInset * 2),
-            height: headerHeight
+        terminalView.frame = bounds
+        terminalView.logicalSize = bounds.size
+        dragStripView.frame = CGRect(
+            x: 0,
+            y: bounds.height - dragStripHeight,
+            width: bounds.width,
+            height: dragStripHeight
         )
-        headerView.frame = headerRect
-
-        closeButton.frame = CGRect(x: 10, y: 8, width: 20, height: 20)
-        titleField.frame = CGRect(
-            x: closeButton.frame.maxX + 8,
-            y: 7,
-            width: headerRect.width - closeButton.frame.maxX - 18,
-            height: 22
-        )
-
-        terminalView.frame = CGRect(
-            x: contentInset,
-            y: contentInset,
-            width: bounds.width - (contentInset * 2),
-            height: bounds.height - headerHeight - (contentInset * 2) - 4
+        closeButton.frame = CGRect(
+            x: bounds.width - closeButtonSize - closeButtonInset,
+            y: bounds.height - closeButtonSize - closeButtonInset,
+            width: closeButtonSize,
+            height: closeButtonSize
         )
 
         layoutResizeHandles()
@@ -513,10 +540,11 @@ final class TerminalNodeView: NSView {
     }
 
     private func updateAppearance() {
-        layer?.backgroundColor = NSColor(calibratedRed: 0.08, green: 0.10, blue: 0.14, alpha: 0.96).cgColor
-        layer?.borderWidth = isSelected ? 2 : 1
-        layer?.borderColor = (isSelected ? NSColor.systemMint : NSColor.white.withAlphaComponent(0.12)).cgColor
-        layer?.shadowOpacity = isSelected ? 0.28 : 0.18
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.borderWidth = 0
+        layer?.borderColor = NSColor.clear.cgColor
+        layer?.shadowOpacity = 0
+        closeButton.isHidden = !isSelected
     }
 
     private func layoutResizeHandles() {
@@ -537,9 +565,6 @@ final class DragHeaderView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = 13
-        layer?.backgroundColor = NSColor(calibratedRed: 0.12, green: 0.15, blue: 0.20, alpha: 0.96).cgColor
     }
 
     required init?(coder: NSCoder) {
@@ -600,10 +625,21 @@ final class ResizeHandleView: NSView {
 final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHandler {
     var onActivate: (() -> Void)?
 
+    var logicalSize: CGSize = .zero {
+        didSet {
+            guard oldValue != logicalSize else {
+                return
+            }
+
+            fitToLogicalSizeIfNeeded()
+        }
+    }
+
     private var session: TerminalSession?
     private var isReady = false
     private var bufferedChunks: [String] = []
     private var lastGridSize = TerminalGridSize(columns: 100, rows: 30)
+    private var lastFittedLogicalSize: CGSize = .zero
 
     init() {
         let controller = WKUserContentController()
@@ -616,8 +652,8 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
         controller.add(WeakScriptMessageHandler(delegate: self), name: "terminal")
         navigationDelegate = self
         setValue(false, forKey: "drawsBackground")
-        underPageBackgroundColor = .clear
-        layer?.cornerRadius = 14
+        underPageBackgroundColor = .black
+        layer?.cornerRadius = 0
         layer?.masksToBounds = true
 
         loadFrontend()
@@ -645,6 +681,7 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isReady = true
         flushBufferedOutput()
+        fitToLogicalSizeIfNeeded(force: true)
         focusTerminal()
     }
 
@@ -654,10 +691,6 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
         }
 
         switch type {
-        case "ready":
-            isReady = true
-            flushBufferedOutput()
-            session?.resize(lastGridSize)
         case "input":
             guard
                 let base64 = payload["data"] as? String,
@@ -748,6 +781,19 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
         for chunk in queued {
             evaluateJavaScript("window.termBridge && window.termBridge.writeBase64('\(chunk)');")
         }
+    }
+
+    private func fitToLogicalSizeIfNeeded(force: Bool = false) {
+        guard isReady, logicalSize.width > 0, logicalSize.height > 0 else {
+            return
+        }
+
+        guard force || lastFittedLogicalSize != logicalSize else {
+            return
+        }
+
+        lastFittedLogicalSize = logicalSize
+        evaluateJavaScript("window.termBridge && window.termBridge.fit();")
     }
 }
 

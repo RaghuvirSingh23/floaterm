@@ -16,9 +16,7 @@ enum CanvasInputMapping {
     }
 
     static func panDelta(for gestureDelta: CGPoint) -> CGPoint {
-        // AppKit reports positive horizontal gesture deltas for leftward motion
-        // and positive vertical deltas for upward motion.
-        CGPoint(x: -gestureDelta.x, y: gestureDelta.y)
+        CGPoint(x: gestureDelta.x, y: -gestureDelta.y)
     }
 
     static func zoomFactor(for verticalGestureDelta: CGFloat) -> CGFloat {

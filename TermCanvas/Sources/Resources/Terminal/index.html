@@ -8,42 +8,30 @@
     />
     <link rel="stylesheet" href="xterm.css" />
     <style>
-      :root {
-        color-scheme: dark;
-        --panel-bg: #070a10;
-        --panel-border: rgba(255, 255, 255, 0.06);
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
       html,
       body {
         width: 100%;
         height: 100%;
         margin: 0;
         overflow: hidden;
-        background:
-          radial-gradient(circle at top, rgba(64, 224, 208, 0.06), transparent 42%),
-          linear-gradient(180deg, #0a0f17 0%, #06090e 100%);
-        color: #eff5ff;
-      }
-
-      body {
-        border: 1px solid var(--panel-border);
-        border-radius: 14px;
-        font-family: "SF Mono", Menlo, Monaco, monospace;
+        background: #000;
       }
 
       #terminal {
         width: 100%;
         height: 100%;
-        padding: 10px 12px 12px;
+        overflow: hidden;
       }
 
       .xterm {
         height: 100%;
+      }
+
+      .xterm .xterm-screen,
+      .xterm .xterm-screen canvas,
+      .xterm-viewport {
+        margin: 0 !important;
+        padding: 0 !important;
       }
 
       .xterm-viewport {
@@ -59,7 +47,7 @@
     <script>
       const container = document.getElementById("terminal");
       const term = new Terminal({
-        allowTransparency: true,
+        allowTransparency: false,
         cursorBlink: true,
         cursorStyle: "block",
         fontFamily: '"SF Mono", Menlo, Monaco, monospace',
@@ -69,33 +57,32 @@
         macOptionIsMeta: true,
         scrollback: 6000,
         theme: {
-          background: "#00000000",
-          foreground: "#ecf4ff",
-          cursor: "#4de5bf",
-          selectionBackground: "rgba(77, 229, 191, 0.22)",
-          black: "#0e131c",
-          red: "#ff7b72",
-          green: "#42d392",
-          yellow: "#f2cc60",
-          blue: "#7eb6ff",
-          magenta: "#d29cff",
-          cyan: "#49dbe6",
-          white: "#d7e3f5",
-          brightBlack: "#4e5a6f",
-          brightRed: "#ffb2af",
-          brightGreen: "#8effcb",
-          brightYellow: "#ffe6a7",
-          brightBlue: "#b7d5ff",
-          brightMagenta: "#efcbff",
-          brightCyan: "#8cf6ff",
-          brightWhite: "#f8fbff"
+          background: "#000000",
+          foreground: "#ffffff",
+          cursor: "#ffffff",
+          selectionBackground: "#444444",
+          black: "#000000",
+          red: "#cd3131",
+          green: "#0dbc79",
+          yellow: "#e5e510",
+          blue: "#2472c8",
+          magenta: "#bc3fbc",
+          cyan: "#11a8cd",
+          white: "#e5e5e5",
+          brightBlack: "#666666",
+          brightRed: "#f14c4c",
+          brightGreen: "#23d18b",
+          brightYellow: "#f5f543",
+          brightBlue: "#3b8eea",
+          brightMagenta: "#d670d6",
+          brightCyan: "#29b8db",
+          brightWhite: "#ffffff"
         }
       });
       const fitAddon = new FitAddon.FitAddon();
       term.loadAddon(fitAddon);
       term.open(container);
 
-      const decoder = new TextDecoder();
       const encoder = new TextEncoder();
 
       function post(message) {
@@ -135,11 +122,6 @@
         term.focus();
       });
 
-      const resizeObserver = new ResizeObserver(() => {
-        window.requestAnimationFrame(fit);
-      });
-      resizeObserver.observe(document.body);
-
       document.addEventListener("mousedown", () => term.focus());
       window.addEventListener("focus", () => term.focus());
 
@@ -157,9 +139,7 @@
       };
 
       window.requestAnimationFrame(() => {
-        fit();
         term.focus();
-        post({ type: "ready" });
       });
     </script>
   </body>
