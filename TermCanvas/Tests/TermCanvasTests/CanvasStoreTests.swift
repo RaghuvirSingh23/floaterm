@@ -65,4 +65,43 @@ final class CanvasStoreTests: XCTestCase {
         store.commitText(id: textID, content: "   ")
         XCTAssertFalse(store.textItems.contains(where: { $0.id == textID }))
     }
+
+    @MainActor
+    func testResizeTextFromLeftKeepsRightEdgeStable() throws {
+        let store = CanvasStore()
+        let textID = store.createText(at: CGPoint(x: 0, y: 0), content: "one two three four five six seven eight")
+        let originalItem = try XCTUnwrap(store.textItems.first(where: { $0.id == textID }))
+        let originalMaxX = originalItem.frame.maxX
+
+        store.resizeTextItem(id: textID, handle: .left, byScreenDelta: CGPoint(x: 80, y: 0))
+
+        let resizedItem = try XCTUnwrap(store.textItems.first(where: { $0.id == textID }))
+        XCTAssertEqual(resizedItem.frame.maxX, originalMaxX, accuracy: 0.0001)
+        XCTAssertNotNil(resizedItem.wrapWidth)
+        XCTAssertLessThan(resizedItem.frame.width, originalItem.frame.width)
+    }
+
+    @MainActor
+    func testSingleCharacterTextCanShrinkBackAfterExpansion() throws {
+        let store = CanvasStore()
+        let textID = store.createText(at: CGPoint(x: 0, y: 0), content: "h")
+        let originalItem = try XCTUnwrap(store.textItems.first(where: { $0.id == textID }))
+
+        store.resizeTextItem(id: textID, handle: .right, byScreenDelta: CGPoint(x: 160, y: 0))
+        store.resizeTextItem(id: textID, handle: .right, byScreenDelta: CGPoint(x: -600, y: 0))
+
+        let resizedItem = try XCTUnwrap(store.textItems.first(where: { $0.id == textID }))
+        XCTAssertEqual(resizedItem.frame.width, originalItem.frame.width, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testRenameNodeTrimsAndLimitsTitleLength() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+
+        store.renameNode(id: nodeID, title: "   12345678901234567890extra   ")
+
+        let renamedNode = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID }))
+        XCTAssertEqual(renamedNode.title, "12345678901234567890")
+    }
 }

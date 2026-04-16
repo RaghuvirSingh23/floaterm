@@ -4,7 +4,7 @@ import Foundation
 enum CanvasGeometry {
     static let minimumNodeSize = CGSize(width: 280, height: 190)
     static let defaultNodeSize = CGSize(width: 520, height: 320)
-    static let minimumTextSize = CGSize(width: 72, height: 32)
+    static let minimumTextHeight: CGFloat = 32
     static let textPadding = CGSize(width: 18, height: 10)
     static let minimumZoom: CGFloat = 0.35
     static let maximumZoom: CGFloat = 2.6
@@ -113,21 +113,22 @@ enum CanvasGeometry {
         let measured = measuredTextSize(text: normalized, wrapWidth: wrapWidth)
         let paddedWidth = ceil(measured.width + textPadding.width)
         let paddedHeight = ceil(measured.height + textPadding.height)
+        let minimumWidth = minimumTextFrameWidth(for: normalized)
 
         if let wrapWidth {
             return CGSize(
-                width: max(minimumTextSize.width, ceil(wrapWidth + textPadding.width)),
-                height: max(minimumTextSize.height, paddedHeight)
+                width: max(minimumWidth, ceil(wrapWidth + textPadding.width)),
+                height: max(minimumTextHeight, paddedHeight)
             )
         }
 
         return CGSize(
             width: paddedWidth,
-            height: max(minimumTextSize.height, paddedHeight)
+            height: max(minimumTextHeight, paddedHeight)
         )
     }
 
-    static func resizedText(frame: CGRect, handle: ResizeHandle, deltaInWorld: CGPoint) -> CGRect {
+    static func resizedText(frame: CGRect, handle: ResizeHandle, deltaInWorld: CGPoint, minimumWidth: CGFloat) -> CGRect {
         var candidate = frame
 
         switch handle {
@@ -140,19 +141,34 @@ enum CanvasGeometry {
             break
         }
 
-        if candidate.width < minimumTextSize.width {
+        if candidate.size.width < minimumWidth {
             switch handle {
             case .topLeft, .bottomLeft, .left:
-                candidate.origin.x = frame.maxX - minimumTextSize.width
+                candidate.origin.x = frame.maxX - minimumWidth
             default:
                 break
             }
 
-            candidate.size.width = minimumTextSize.width
+            candidate.size.width = minimumWidth
         }
 
-        candidate.size.height = max(candidate.height, minimumTextSize.height)
+        candidate.size.height = max(candidate.height, minimumTextHeight)
         return candidate.standardized
+    }
+
+    @MainActor
+    static func minimumTextFrameWidth(for text: String) -> CGFloat {
+        let normalized = text.isEmpty ? " " : text
+        let widestFragmentWidth = normalized
+            .split(whereSeparator: \.isNewline)
+            .flatMap { line -> [Substring] in
+                let words = line.split(whereSeparator: \.isWhitespace)
+                return words.isEmpty ? [Substring(" ")] : words
+            }
+            .map { measuredTextSize(text: String($0), wrapWidth: nil).width }
+            .max() ?? measuredTextSize(text: normalized, wrapWidth: nil).width
+
+        return ceil(widestFragmentWidth + textPadding.width)
     }
 
     private static func resized(frame: CGRect, handle: ResizeHandle, deltaInWorld: CGPoint, minimumSize: CGSize) -> CGRect {

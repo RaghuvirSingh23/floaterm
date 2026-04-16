@@ -190,6 +190,7 @@ final class CanvasViewportView: NSView {
             needsDisplay = true
         case .text:
             _ = store.createText(at: worldPoint(fromScreenPoint: location))
+            store.tool = .select
         }
     }
 
@@ -592,7 +593,9 @@ final class TerminalNodeView: NSView {
 
     var title = "" {
         didSet {
-            titleField.stringValue = title
+            titleLabel.stringValue = title
+            titleEditor.stringValue = title
+            needsLayout = true
         }
     }
 
@@ -604,9 +607,13 @@ final class TerminalNodeView: NSView {
 
     private let shellInset: CGFloat = 4
     private let shellCornerRadius: CGFloat = 10
+    private let selectionOutlineInset: CGFloat = 3
     private let titlebarInset: CGFloat = 1
     private let titlebarHeight: CGFloat = 24
-    private let titleHorizontalInset: CGFloat = 84
+    private let titleAfterCloseGap: CGFloat = 14
+    private let titleTrailingInset: CGFloat = 14
+    private let titleButtonGap: CGFloat = 7
+    private let titleButtonSize: CGFloat = 12
     private let contentHorizontalInset: CGFloat = 1
     private let contentBottomInset: CGFloat = 1
     private let contentTopGap: CGFloat = 1
@@ -614,16 +621,19 @@ final class TerminalNodeView: NSView {
     private let closeButtonSize: CGFloat = 10
     private let chromeLineWidth: CGFloat = 1
     private let separatorHeight: CGFloat = 1
-    private let edgeHandleThickness: CGFloat = 10
-    private let cornerHandleSize: CGFloat = 18
+    private let edgeHandleThickness: CGFloat = 6
+    private let cornerHandleSize: CGFloat = 14
 
     private let shellView = TerminalOutlineView()
+    private let selectionOutlineView = DashedSelectionOutlineView()
     private let titlebarView = TerminalOutlineView()
     private let titlebarSeparatorView = TerminalOutlineView()
     private let terminalFrameView = TerminalOutlineView()
     private let dragStripView = DragHeaderView()
-    private let titleField = EditableCanvasTextField()
+    private let titleLabel = PassiveLabelTextField(labelWithString: "")
+    private let titleEditor = InlineTitleEditorView()
     private let closeButton = CursorButton()
+    private let editTitleButton = IconClickView()
     private let terminalView = TerminalWebView()
     private var contentBottomCornerRadius: CGFloat {
         max(shellCornerRadius - shellInset, 0)
@@ -646,22 +656,27 @@ final class TerminalNodeView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 0
         layer?.masksToBounds = false
-        titleField.stringValue = title
-        titleField.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        titleField.alignment = .center
-        titleField.textColor = NSColor(calibratedWhite: 0.74, alpha: 1)
-        titleField.cell?.lineBreakMode = .byTruncatingTail
-        titleField.cell?.usesSingleLineMode = true
-        titleField.isEditable = true
-        titleField.drawsBackground = false
-        titleField.isBordered = false
-        titleField.focusRingType = .none
-        titleField.beginsEditingOnSingleClick = false
-        titleField.onActivate = { [weak self] in
-            self?.onChromeActivation?()
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.alignment = .center
+        titleLabel.textColor = NSColor(calibratedWhite: 0.74, alpha: 1)
+        titleLabel.cell?.lineBreakMode = .byClipping
+        titleLabel.cell?.usesSingleLineMode = true
+        titleLabel.isSelectable = false
+        titleLabel.drawsBackground = false
+        titleLabel.isBordered = false
+
+        titleEditor.stringValue = title
+        titleEditor.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleEditor.alignment = .center
+        titleEditor.textColor = NSColor(calibratedWhite: 0.74, alpha: 1)
+        titleEditor.maximumCharacterCount = 20
+        titleEditor.isHidden = true
+        titleEditor.onChange = { [weak self] _ in
+            self?.needsLayout = true
         }
-        titleField.onCommit = { [weak self] title in
-            self?.onTitleCommit?(title)
+        titleEditor.onCommit = { [weak self] title in
+            self?.finishTitleEditing(with: title)
         }
 
         closeButton.isBordered = false
@@ -679,19 +694,30 @@ final class TerminalNodeView: NSView {
             closeButton.image = image.withSymbolConfiguration(configuration)
         }
 
+        editTitleButton.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "Rename terminal")
+        editTitleButton.toolTip = "Rename terminal"
+        editTitleButton.symbolPointSize = 9
+        editTitleButton.symbolWeight = .medium
+
         dragStripView.onActivate = { [weak self] in
             self?.onChromeActivation?()
         }
         dragStripView.onDrag = { [weak self] delta in
             self?.onMove?(delta)
         }
+        dragStripView.onEditTitle = { [weak self] in
+            self?.beginTitleEditing()
+        }
+        dragStripView.onClose = { [weak self] in
+            self?.onClose?()
+        }
 
         terminalView.onActivate = { [weak self] in
             self?.onTerminalActivation?()
         }
 
-        dragStripView.addSubview(titleField)
         addSubview(shellView)
+        addSubview(selectionOutlineView)
         addSubview(titlebarView)
         addSubview(titlebarSeparatorView)
         addSubview(terminalFrameView)
@@ -703,6 +729,9 @@ final class TerminalNodeView: NSView {
         }
 
         addSubview(closeButton)
+        addSubview(titleLabel)
+        addSubview(titleEditor)
+        addSubview(editTitleButton)
 
         updateAppearance()
     }
@@ -715,6 +744,7 @@ final class TerminalNodeView: NSView {
         super.layout()
 
         let shellFrame = bounds.insetBy(dx: shellInset, dy: shellInset)
+        let selectionOutlineFrame = shellFrame.insetBy(dx: -selectionOutlineInset, dy: -selectionOutlineInset)
         let titlebarFrame = CGRect(
             x: shellFrame.minX + titlebarInset,
             y: shellFrame.maxY - titlebarInset - titlebarHeight,
@@ -735,54 +765,57 @@ final class TerminalNodeView: NSView {
         )
 
         shellView.frame = shellFrame
+        selectionOutlineView.frame = selectionOutlineFrame
+        selectionOutlineView.cornerRadius = shellCornerRadius + selectionOutlineInset
         titlebarView.frame = titlebarFrame
         titlebarSeparatorView.frame = separatorFrame
         dragStripView.frame = titlebarFrame
-        let titleHeight = ceil(titleField.intrinsicContentSize.height)
-        titleField.frame = CGRect(
-            x: titleHorizontalInset,
-            y: floor((titlebarFrame.height - titleHeight) * 0.5),
-            width: max(titlebarFrame.width - (titleHorizontalInset * 2), 40),
+        closeButton.frame = CGRect(
+            x: titlebarFrame.minX + closeButtonLeadingInset,
+            y: floor(titlebarFrame.midY - (closeButtonSize * 0.5)),
+            width: closeButtonSize,
+            height: closeButtonSize
+        )
+        closeButton.layer?.cornerRadius = closeButtonSize * 0.5
+
+        let titleClusterMinX = closeButton.frame.maxX + titleAfterCloseGap
+        let titleClusterMaxX = titlebarFrame.maxX - titleTrailingInset
+        let titleClusterAvailableWidth = max(titleClusterMaxX - titleClusterMinX, 40)
+        let titleHeight = ceil(max(titleLabel.intrinsicContentSize.height, titleEditor.intrinsicContentSize.height))
+        let titleNaturalWidth = measuredTitleWidth()
+        let titleWidth = min(
+            titleNaturalWidth,
+            max(40, titleClusterAvailableWidth - titleButtonSize - titleButtonGap)
+        )
+        let titleClusterWidth = titleWidth + titleButtonGap + titleButtonSize
+        let titleClusterX = titleClusterMinX + max((titleClusterAvailableWidth - titleClusterWidth) * 0.5, 0)
+        let titleFrame = CGRect(
+            x: titleClusterX,
+            y: floor(titlebarFrame.midY - (titleHeight * 0.5)),
+            width: titleWidth,
             height: titleHeight
+        )
+        titleLabel.frame = titleFrame
+        titleEditor.frame = titleFrame
+        editTitleButton.frame = CGRect(
+            x: titleFrame.maxX + titleButtonGap,
+            y: floor(titlebarFrame.midY - (titleButtonSize * 0.5)),
+            width: titleButtonSize,
+            height: titleButtonSize
         )
         terminalView.frame = contentFrame
         terminalView.logicalSize = contentFrame.size
         terminalView.layer?.cornerRadius = contentBottomCornerRadius
         terminalView.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         terminalFrameView.frame = contentFrame.insetBy(dx: -1, dy: -1)
-        closeButton.frame = CGRect(
-            x: titlebarFrame.minX + closeButtonLeadingInset,
-            y: titlebarFrame.midY - (closeButtonSize * 0.5),
-            width: closeButtonSize,
-            height: closeButtonSize
-        )
-        closeButton.layer?.cornerRadius = closeButtonSize * 0.5
-        dragStripView.cursorExclusionRect = CGRect(
-            x: closeButton.frame.minX - titlebarFrame.minX - 6,
-            y: 0,
-            width: closeButton.frame.width + 12,
-            height: titlebarFrame.height
-        )
+        dragStripView.closeActionRect = dragStripView.convert(closeButton.frame, from: self).insetBy(dx: -6, dy: -6)
+        dragStripView.editActionRect = dragStripView.convert(editTitleButton.frame, from: self).insetBy(dx: -4, dy: -4)
+        dragStripView.cursorExclusionRects = titleEditor.isHidden
+            ? []
+            : [dragStripView.convert(titleEditor.frame, from: self).insetBy(dx: -2, dy: -2)]
 
         layoutResizeHandles()
         window?.invalidateCursorRects(for: self)
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        if !closeButton.isHidden, closeButton.frame.contains(point) {
-            let buttonPoint = convert(point, to: closeButton)
-            return closeButton.hitTest(buttonPoint) ?? closeButton
-        }
-
-        return super.hitTest(point)
-    }
-
-    override func resetCursorRects() {
-        super.resetCursorRects()
-
-        if !closeButton.isHidden {
-            addCursorRect(closeButton.frame, cursor: .pointingHand)
-        }
     }
 
     @objc
@@ -801,17 +834,23 @@ final class TerminalNodeView: NSView {
         layer?.shadowOpacity = 0
         let shellBorderColor = NSColor(calibratedWhite: isSelected ? 0.34 : 0.26, alpha: 1)
         let shellFillColor = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.14, alpha: 0.98)
+        let selectionOutlineColor = NSColor(calibratedWhite: 0.82, alpha: 0.9)
         let titlebarFillColor = NSColor(calibratedRed: 0.20, green: 0.21, blue: 0.24, alpha: 0.98)
         let separatorColor = NSColor(calibratedWhite: 0.30, alpha: 1)
         let contentBorderColor = NSColor(calibratedWhite: isSelected ? 0.25 : 0.20, alpha: 1)
         let titleColor = NSColor(calibratedWhite: isSelected ? 0.84 : 0.70, alpha: 1)
         let closeButtonFillColor = NSColor(calibratedRed: 1.0, green: 0.37, blue: 0.33, alpha: isSelected ? 1 : 0.92)
         let closeButtonGlyphColor = NSColor(calibratedRed: 0.34, green: 0.12, blue: 0.11, alpha: 0.96)
+        let editButtonColor = NSColor(calibratedWhite: isSelected ? 0.80 : 0.66, alpha: 1)
 
         closeButton.isHidden = false
         closeButton.contentTintColor = closeButtonGlyphColor
         closeButton.layer?.backgroundColor = closeButtonFillColor.cgColor
-        titleField.textColor = titleColor
+        editTitleButton.contentTintColor = editButtonColor
+        titleLabel.textColor = titleColor
+        titleEditor.textColor = titleColor
+        selectionOutlineView.strokeColor = selectionOutlineColor
+        selectionOutlineView.isHidden = !isSelected
 
         shellView.apply(
             cornerRadius: shellCornerRadius,
@@ -855,6 +894,40 @@ final class TerminalNodeView: NSView {
             backgroundColor: .clear
         )
         window?.invalidateCursorRects(for: self)
+    }
+
+    private func beginTitleEditing() {
+        titleEditor.stringValue = title
+        titleLabel.isHidden = true
+        titleEditor.isHidden = false
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            self?.titleEditor.beginEditing()
+        }
+    }
+
+    private func finishTitleEditing(with proposedTitle: String) {
+        let normalized = String(proposedTitle.trimmingCharacters(in: .whitespacesAndNewlines).prefix(20))
+        titleLabel.isHidden = false
+        titleEditor.isHidden = true
+
+        if !normalized.isEmpty {
+            title = normalized
+            onTitleCommit?(normalized)
+        } else {
+            titleEditor.stringValue = title
+        }
+
+        needsLayout = true
+    }
+
+    private func measuredTitleWidth() -> CGFloat {
+        let visibleTitle = titleEditor.isHidden ? title : titleEditor.stringValue
+        let text = visibleTitle.isEmpty ? " " : visibleTitle
+        let font = titleLabel.font ?? .systemFont(ofSize: 12.5, weight: .semibold)
+        let measuredWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        return max(40, measuredWidth)
     }
 
     private func layoutResizeHandles() {
@@ -969,56 +1042,196 @@ final class CanvasTextItemView: NSView {
     }
 }
 
-final class EditableCanvasTextField: NSTextField, NSTextFieldDelegate {
-    var onActivate: (() -> Void)?
-    var onDrag: ((CGPoint) -> Void)?
+final class InlineTitleEditorView: NSView, NSTextViewDelegate {
+    var onChange: ((String) -> Void)?
     var onCommit: ((String) -> Void)?
-    var beginsEditingOnSingleClick = false
+
+    var stringValue: String {
+        get { textView.string }
+        set {
+            if textView.string != newValue {
+                textView.string = newValue
+                applyTextStyle()
+                invalidateIntrinsicContentSize()
+            }
+        }
+    }
+
+    var font: NSFont? {
+        didSet {
+            textView.font = font
+            applyTextStyle()
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    var alignment: NSTextAlignment = .center {
+        didSet {
+            applyTextStyle()
+        }
+    }
+
+    var textColor: NSColor? {
+        didSet {
+            textView.textColor = textColor
+            textView.insertionPointColor = textColor ?? .white
+        }
+    }
+
+    var maximumCharacterCount: Int = 20
+
+    var isEditing: Bool {
+        window?.firstResponder === textView
+    }
+
+    private let textView = TitleEditingTextView(frame: .zero)
+    private let scrollView = NSScrollView(frame: .zero)
+    private var isApplyingCharacterLimit = false
+    private var didCommitCurrentSession = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        delegate = self
-        isBordered = false
-        drawsBackground = false
-        focusRingType = .none
-        isEditable = true
-        isSelectable = true
+
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = false
+
+        textView.delegate = self
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.textContainerInset = .zero
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = false
+        textView.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.heightTracksTextView = false
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.lineBreakMode = .byClipping
+        textView.onCommit = { [weak self] in
+            self?.commitIfNeeded()
+        }
+
+        scrollView.documentView = textView
+        addSubview(scrollView)
+        applyTextStyle()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func mouseDown(with event: NSEvent) {
-        if currentEditor() != nil {
-            super.mouseDown(with: event)
-            return
-        }
-
-        onActivate?()
-
-        guard beginsEditingOnSingleClick || event.clickCount >= 2 else {
-            return
-        }
-
-        beginEditing()
+    override func layout() {
+        super.layout()
+        scrollView.frame = bounds
+        textView.frame = bounds
+        textView.textContainer?.containerSize = CGSize(width: max(bounds.width, 1), height: CGFloat.greatestFiniteMagnitude)
     }
 
-    override func mouseDragged(with event: NSEvent) {
-        guard currentEditor() == nil else {
-            return
-        }
-
-        onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+    override var intrinsicContentSize: NSSize {
+        let text = stringValue.isEmpty ? " " : stringValue
+        let measuredFont = font ?? .systemFont(ofSize: 12.5, weight: .semibold)
+        let size = (text as NSString).size(withAttributes: [.font: measuredFont])
+        return NSSize(width: ceil(size.width), height: ceil(size.height))
     }
 
     func beginEditing() {
-        window?.makeFirstResponder(self)
-        selectText(nil)
+        didCommitCurrentSession = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        guard let window else {
+            return
+        }
+
+        window.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: 0, length: textView.string.utf16.count))
     }
 
-    func controlTextDidEndEditing(_ obj: Notification) {
-        onCommit?(stringValue)
+    func currentEditor() -> NSTextView? {
+        isEditing ? textView : nil
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard !isApplyingCharacterLimit else {
+            invalidateIntrinsicContentSize()
+            onChange?(stringValue)
+            return
+        }
+
+        if textView.string.count > maximumCharacterCount {
+            isApplyingCharacterLimit = true
+            textView.string = String(textView.string.prefix(maximumCharacterCount))
+            textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+            isApplyingCharacterLimit = false
+        }
+
+        applyTextStyle()
+        invalidateIntrinsicContentSize()
+        onChange?(stringValue)
+    }
+
+    private func commitIfNeeded() {
+        guard !didCommitCurrentSession else {
+            return
+        }
+
+        didCommitCurrentSession = true
+        textView.isEditable = false
+        textView.isSelectable = false
+        onCommit?(textView.string)
+    }
+
+    private func applyTextStyle() {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = alignment
+        paragraphStyle.lineBreakMode = .byClipping
+
+        textView.defaultParagraphStyle = paragraphStyle
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? .systemFont(ofSize: 12.5, weight: .semibold),
+            .foregroundColor: textColor ?? NSColor.white,
+            .paragraphStyle: paragraphStyle,
+        ]
+        textView.typingAttributes = attributes
+
+        guard let storage = textView.textStorage else {
+            return
+        }
+
+        let selectedRange = textView.selectedRange()
+        storage.beginEditing()
+        storage.setAttributes(attributes, range: NSRange(location: 0, length: storage.length))
+        storage.endEditing()
+        textView.setSelectedRange(selectedRange)
+    }
+}
+
+final class TitleEditingTextView: NSTextView {
+    var onCommit: (() -> Void)?
+
+    override func doCommand(by selector: Selector) {
+        switch selector {
+        case #selector(insertNewline(_:)), #selector(insertTab(_:)), #selector(cancelOperation(_:)):
+            onCommit?()
+        default:
+            super.doCommand(by: selector)
+        }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResign = super.resignFirstResponder()
+        if didResign {
+            onCommit?()
+        }
+        return didResign
     }
 }
 
@@ -1191,6 +1404,12 @@ final class CanvasIntrinsicTextView: NSTextView {
     }
 }
 
+final class PassiveLabelTextField: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 final class TerminalOutlineView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1236,10 +1455,73 @@ final class TerminalOutlineView: NSView {
     }
 }
 
+final class DashedSelectionOutlineView: NSView {
+    var strokeColor: NSColor = .white {
+        didSet {
+            shapeLayer.strokeColor = strokeColor.cgColor
+        }
+    }
+
+    var cornerRadius: CGFloat = 0 {
+        didSet {
+            updatePath()
+        }
+    }
+
+    private let shapeLayer = CAShapeLayer()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        shapeLayer.fillColor = NSColor.clear.cgColor
+        shapeLayer.lineWidth = 1
+        shapeLayer.lineDashPattern = [2, 4]
+        shapeLayer.strokeColor = strokeColor.cgColor
+        layer?.addSublayer(shapeLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        shapeLayer.frame = bounds
+        updatePath()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    private func updatePath() {
+        let inset = shapeLayer.lineWidth * 0.5
+        let rect = bounds.insetBy(dx: inset, dy: inset)
+        shapeLayer.path = CGPath(
+            roundedRect: rect,
+            cornerWidth: max(cornerRadius - inset, 0),
+            cornerHeight: max(cornerRadius - inset, 0),
+            transform: nil
+        )
+    }
+}
+
 final class DragHeaderView: NSView {
     var onDrag: ((CGPoint) -> Void)?
     var onActivate: (() -> Void)?
-    var cursorExclusionRect: CGRect?
+    var onEditTitle: (() -> Void)?
+    var onClose: (() -> Void)?
+    var cursorExclusionRects: [CGRect] = []
+    var editActionRect: CGRect = .zero
+    var closeActionRect: CGRect = .zero
+
+    private enum Interaction {
+        case drag
+        case close
+    }
+
+    private var interaction: Interaction?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1250,34 +1532,81 @@ final class DragHeaderView: NSView {
     }
 
     override func resetCursorRects() {
-        guard let exclusion = cursorExclusionRect?.intersection(bounds), !exclusion.isEmpty else {
+        let pointerRects = [closeActionRect, editActionRect]
+            .map { $0.intersection(bounds) }
+            .filter { !$0.isEmpty }
+
+        let exclusions = (cursorExclusionRects + pointerRects)
+            .map { $0.intersection(bounds) }
+            .filter { !$0.isEmpty }
+            .sorted { $0.minX < $1.minX }
+
+        guard !exclusions.isEmpty else {
             addCursorRect(bounds, cursor: .openHand)
             return
         }
 
-        let leftWidth = max(exclusion.minX, 0)
-        if leftWidth > 0 {
+        var currentX: CGFloat = 0
+        for exclusion in exclusions {
+            let leftWidth = max(exclusion.minX - currentX, 0)
+            if leftWidth > 0 {
+                addCursorRect(
+                    CGRect(x: currentX, y: 0, width: leftWidth, height: bounds.height),
+                    cursor: .openHand
+                )
+            }
+            currentX = max(currentX, exclusion.maxX)
+        }
+
+        if currentX < bounds.width {
             addCursorRect(
-                CGRect(x: 0, y: 0, width: leftWidth, height: bounds.height),
+                CGRect(x: currentX, y: 0, width: bounds.width - currentX, height: bounds.height),
                 cursor: .openHand
             )
         }
 
-        let rightX = min(max(exclusion.maxX, 0), bounds.width)
-        if rightX < bounds.width {
-            addCursorRect(
-                CGRect(x: rightX, y: 0, width: bounds.width - rightX, height: bounds.height),
-                cursor: .openHand
-            )
+        for rect in pointerRects {
+            addCursorRect(rect, cursor: .pointingHand)
         }
     }
 
     override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+
+        if closeActionRect.contains(point) {
+            interaction = .close
+            return
+        }
+
+        if editActionRect.contains(point) {
+            interaction = nil
+            onEditTitle?()
+            return
+        }
+
+        interaction = .drag
         onActivate?()
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard case .drag = interaction else {
+            return
+        }
+
         onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { interaction = nil }
+
+        let point = convert(event.locationInWindow, from: nil)
+
+        switch interaction {
+        case .close where closeActionRect.contains(point):
+            onClose?()
+        default:
+            break
+        }
     }
 
     func applyStyle(cornerRadius: CGFloat, borderWidth: CGFloat, borderColor: NSColor, backgroundColor: NSColor) {
@@ -1290,8 +1619,73 @@ final class DragHeaderView: NSView {
 }
 
 final class CursorButton: NSButton {
+    override var acceptsFirstResponder: Bool {
+        false
+    }
+
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
+final class IconClickView: NSView {
+    var image: NSImage? {
+        didSet {
+            updateImage()
+        }
+    }
+
+    var contentTintColor: NSColor = .white {
+        didSet {
+            imageView.contentTintColor = contentTintColor
+        }
+    }
+
+    var symbolPointSize: CGFloat = 9 {
+        didSet {
+            updateImage()
+        }
+    }
+
+    var symbolWeight: NSFont.Weight = .regular {
+        didSet {
+            updateImage()
+        }
+    }
+
+    private let imageView = NSImageView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        imageView.imageScaling = .scaleProportionallyDown
+        imageView.contentTintColor = contentTintColor
+        addSubview(imageView)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var acceptsFirstResponder: Bool {
+        false
+    }
+
+    override func layout() {
+        super.layout()
+        imageView.frame = bounds
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    private func updateImage() {
+        if let image {
+            let configuration = NSImage.SymbolConfiguration(pointSize: symbolPointSize, weight: symbolWeight)
+            imageView.image = image.withSymbolConfiguration(configuration)
+        } else {
+            imageView.image = nil
+        }
     }
 }
 

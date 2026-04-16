@@ -4,6 +4,8 @@ import Foundation
 
 @MainActor
 final class CanvasStore: ObservableObject {
+    private let maximumNodeTitleLength = 20
+
     @Published private(set) var nodes: [TerminalNode] = []
     @Published private(set) var textItems: [CanvasTextItem] = []
     @Published private(set) var selectedElementIDs: Set<UUID> = []
@@ -163,7 +165,11 @@ final class CanvasStore: ObservableObject {
     }
 
     func renameNode(id: UUID, title: String) {
-        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = String(
+            title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(maximumNodeTitleLength)
+        )
         guard !normalized.isEmpty else {
             return
         }
@@ -200,7 +206,13 @@ final class CanvasStore: ObservableObject {
         let deltaInWorld = CGPoint(x: delta.x / camera.zoom, y: delta.y / camera.zoom)
 
         mutateTextItem(id: id) { item in
-            let resizedFrame = CanvasGeometry.resizedText(frame: item.frame, handle: handle, deltaInWorld: deltaInWorld)
+            let minimumWidth = CanvasGeometry.minimumTextFrameWidth(for: item.text)
+            let resizedFrame = CanvasGeometry.resizedText(
+                frame: item.frame,
+                handle: handle,
+                deltaInWorld: deltaInWorld,
+                minimumWidth: minimumWidth
+            )
             let wrapWidth = max(1, resizedFrame.width - CanvasGeometry.textPadding.width)
             let measuredSize = CanvasGeometry.sizeForText(item.text, wrapWidth: wrapWidth)
 
