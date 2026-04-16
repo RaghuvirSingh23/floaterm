@@ -19,14 +19,58 @@ struct CanvasViewRepresentable: NSViewRepresentable {
 final class CanvasViewportView: NSView {
     private enum Interaction {
         case panning(anchor: CGPoint, initialPan: CGPoint)
-        case creating(startScreen: CGPoint, currentScreen: CGPoint)
+        case creatingTerminal(startScreen: CGPoint, currentScreen: CGPoint)
+        case marqueeSelecting(startScreen: CGPoint, currentScreen: CGPoint, appendToSelection: Bool)
+    }
+
+    private enum PreviewStyle {
+        case terminalCreation
+        case selection
+
+        var fillColor: NSColor {
+            switch self {
+            case .terminalCreation:
+                return NSColor.systemMint.withAlphaComponent(0.14)
+            case .selection:
+                return NSColor.systemBlue.withAlphaComponent(0.12)
+            }
+        }
+
+        var strokeColor: NSColor {
+            switch self {
+            case .terminalCreation:
+                return NSColor.systemMint.withAlphaComponent(0.9)
+            case .selection:
+                return NSColor.systemBlue.withAlphaComponent(0.96)
+            }
+        }
+
+        var dashPattern: [CGFloat] {
+            switch self {
+            case .terminalCreation:
+                return [10, 7]
+            case .selection:
+                return [8, 5]
+            }
+        }
+
+        var cornerRadius: CGFloat {
+            switch self {
+            case .terminalCreation:
+                return 18
+            case .selection:
+                return 10
+            }
+        }
     }
 
     private weak var store: CanvasStore?
     private let worldView = NSView()
     private var nodeViews: [UUID: TerminalNodeView] = [:]
+    private var textViews: [UUID: CanvasTextItemView] = [:]
     private var interaction: Interaction?
     private var previewWorldRect: CGRect?
+    private var previewStyle: PreviewStyle?
     private var hasBootstrappedCamera = false
     private var spacebarIsDown = false
 
@@ -64,7 +108,7 @@ final class CanvasViewportView: NSView {
         }
 
         updateWorldViewTransform()
-        syncNodeViews()
+        syncElementViews()
         needsDisplay = true
     }
 
@@ -78,7 +122,7 @@ final class CanvasViewportView: NSView {
         }
 
         updateWorldViewTransform()
-        syncNodeViews()
+        syncElementViews()
         needsDisplay = true
     }
 
@@ -99,14 +143,19 @@ final class CanvasViewportView: NSView {
         drawGrid(camera: store.camera, in: dirtyRect)
 
         if let previewWorldRect {
+            let style = previewStyle ?? .selection
             let previewRect = worldView.convert(previewWorldRect, to: self)
-            let previewPath = NSBezierPath(roundedRect: previewRect, xRadius: 18, yRadius: 18)
-            NSColor.systemMint.withAlphaComponent(0.14).setFill()
+            let previewPath = NSBezierPath(
+                roundedRect: previewRect,
+                xRadius: style.cornerRadius,
+                yRadius: style.cornerRadius
+            )
+            style.fillColor.setFill()
             previewPath.fill()
 
             previewPath.lineWidth = 2
-            previewPath.setLineDash([10, 7], count: 2, phase: 0)
-            NSColor.systemMint.withAlphaComponent(0.9).setStroke()
+            previewPath.setLineDash(style.dashPattern, count: style.dashPattern.count, phase: 0)
+            style.strokeColor.setStroke()
             previewPath.stroke()
         }
     }
@@ -126,11 +175,21 @@ final class CanvasViewportView: NSView {
 
         switch store.tool {
         case .select:
-            store.selectNode(nil)
-        case .terminal:
-            interaction = .creating(startScreen: location, currentScreen: location)
+            interaction = .marqueeSelecting(
+                startScreen: location,
+                currentScreen: location,
+                appendToSelection: event.modifierFlags.contains(.shift)
+            )
             previewWorldRect = normalizedWorldRect(from: location, to: location)
+            previewStyle = .selection
             needsDisplay = true
+        case .terminal:
+            interaction = .creatingTerminal(startScreen: location, currentScreen: location)
+            previewWorldRect = normalizedWorldRect(from: location, to: location)
+            previewStyle = .terminalCreation
+            needsDisplay = true
+        case .text:
+            _ = store.createText(at: worldPoint(fromScreenPoint: location))
         }
     }
 
@@ -146,8 +205,15 @@ final class CanvasViewportView: NSView {
             let delta = CGPoint(x: location.x - anchor.x, y: location.y - anchor.y)
             store.setPan(CGPoint(x: initialPan.x + delta.x, y: initialPan.y + delta.y))
             updateWorldViewTransform()
-        case let .creating(startScreen, _):
-            self.interaction = .creating(startScreen: startScreen, currentScreen: location)
+        case let .creatingTerminal(startScreen, _):
+            self.interaction = .creatingTerminal(startScreen: startScreen, currentScreen: location)
+            previewWorldRect = normalizedWorldRect(from: startScreen, to: location)
+        case let .marqueeSelecting(startScreen, _, appendToSelection):
+            self.interaction = .marqueeSelecting(
+                startScreen: startScreen,
+                currentScreen: location,
+                appendToSelection: appendToSelection
+            )
             previewWorldRect = normalizedWorldRect(from: startScreen, to: location)
         }
 
@@ -158,6 +224,7 @@ final class CanvasViewportView: NSView {
         guard let store else {
             interaction = nil
             previewWorldRect = nil
+            previewStyle = nil
             needsDisplay = true
             return
         }
@@ -165,6 +232,7 @@ final class CanvasViewportView: NSView {
         defer {
             interaction = nil
             previewWorldRect = nil
+            previewStyle = nil
             needsDisplay = true
         }
 
@@ -175,7 +243,7 @@ final class CanvasViewportView: NSView {
         switch interaction {
         case .panning:
             return
-        case let .creating(startScreen, currentScreen):
+        case let .creatingTerminal(startScreen, currentScreen):
             var frame = normalizedWorldRect(from: startScreen, to: currentScreen)
 
             if frame.width < 24 || frame.height < 24 {
@@ -190,6 +258,17 @@ final class CanvasViewportView: NSView {
 
             _ = store.createTerminal(frame: frame)
             store.tool = .select
+        case let .marqueeSelecting(startScreen, currentScreen, appendToSelection):
+            let selectionRect = normalizedWorldRect(from: startScreen, to: currentScreen)
+            let isClick = selectionRect.width < 8 && selectionRect.height < 8
+
+            if isClick {
+                if !appendToSelection {
+                    store.clearSelection()
+                }
+            } else {
+                store.selectElements(intersecting: selectionRect, append: appendToSelection)
+            }
         }
     }
 
@@ -256,7 +335,7 @@ final class CanvasViewportView: NSView {
 
         switch event.keyCode {
         case 51, 117:
-            store.removeSelectedNode()
+            store.deleteSelection()
             return
         default:
             break
@@ -265,6 +344,8 @@ final class CanvasViewportView: NSView {
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "t":
             store.tool = .terminal
+        case "x":
+            store.tool = .text
         case "v", "s":
             store.tool = .select
         case "+", "=":
@@ -287,6 +368,11 @@ final class CanvasViewportView: NSView {
         super.keyUp(with: event)
     }
 
+    private func syncElementViews() {
+        syncNodeViews()
+        syncTextViews()
+    }
+
     private func syncNodeViews() {
         guard let store else {
             return
@@ -307,7 +393,7 @@ final class CanvasViewportView: NSView {
             } else {
                 let created = TerminalNodeView(title: node.title)
                 created.onMove = { [weak self] delta in
-                    self?.store?.moveNode(id: node.id, byScreenDelta: delta)
+                    self?.store?.moveSelection(anchorID: node.id, byScreenDelta: delta)
                 }
                 created.onResize = { [weak self] handle, delta in
                     self?.store?.resizeNode(id: node.id, handle: handle, byScreenDelta: delta)
@@ -316,12 +402,15 @@ final class CanvasViewportView: NSView {
                     self?.store?.removeNode(id: node.id)
                 }
                 created.onChromeActivation = { [weak self] in
-                    self?.store?.selectNode(node.id)
+                    self?.store?.activateElement(node.id)
                     self?.window?.makeFirstResponder(self)
                 }
                 created.onTerminalActivation = { [weak self, weak created] in
-                    self?.store?.selectNode(node.id)
+                    self?.store?.activateElement(node.id)
                     created?.focusTerminal()
+                }
+                created.onTitleCommit = { [weak self] title in
+                    self?.store?.renameNode(id: node.id, title: title)
                 }
                 worldView.addSubview(created)
                 nodeViews[node.id] = created
@@ -329,13 +418,76 @@ final class CanvasViewportView: NSView {
             }
 
             view.title = node.title
-            view.isSelected = store.selectedNodeID == node.id
+            view.isSelected = store.selectedElementIDs.contains(node.id)
             view.layer?.zPosition = CGFloat(index) + (view.isSelected ? 1_000 : 0)
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             view.frame = node.frame
             CATransaction.commit()
+        }
+    }
+
+    private func syncTextViews() {
+        guard let store else {
+            return
+        }
+
+        let desiredIDs = Set(store.textItems.map(\.id))
+
+        for (id, view) in textViews where !desiredIDs.contains(id) {
+            view.removeFromSuperview()
+            textViews[id] = nil
+        }
+
+        for (index, item) in store.textItems.enumerated() {
+            let view: CanvasTextItemView
+
+            if let existing = textViews[item.id] {
+                view = existing
+            } else {
+                let created = CanvasTextItemView(text: item.text)
+                created.onActivate = { [weak self] in
+                    self?.store?.activateElement(item.id)
+                    self?.window?.makeFirstResponder(self)
+                }
+                created.onMove = { [weak self] delta in
+                    self?.store?.moveSelection(anchorID: item.id, byScreenDelta: delta)
+                }
+                created.onResize = { [weak self] handle, delta in
+                    self?.store?.resizeTextItem(id: item.id, handle: handle, byScreenDelta: delta)
+                }
+                created.onTextChange = { [weak self] text in
+                    self?.store?.updateTextDraft(id: item.id, content: text)
+                }
+                created.onTextCommit = { [weak self] text in
+                    self?.store?.commitText(id: item.id, content: text)
+                }
+                worldView.addSubview(created)
+                textViews[item.id] = created
+                view = created
+            }
+
+            view.text = item.text
+            view.wrapWidth = item.wrapWidth
+            view.isSelected = store.selectedElementIDs.contains(item.id)
+            view.layer?.zPosition = 10_000 + CGFloat(index) + (view.isSelected ? 1_000 : 0)
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            view.frame = item.frame
+            CATransaction.commit()
+
+            if store.pendingTextEditID == item.id {
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view else {
+                        return
+                    }
+
+                    self.store?.acknowledgePendingTextEdit(id: item.id)
+                    view.beginEditing()
+                }
+            }
         }
     }
 
@@ -436,6 +588,7 @@ final class TerminalNodeView: NSView {
     var onClose: (() -> Void)?
     var onChromeActivation: (() -> Void)?
     var onTerminalActivation: (() -> Void)?
+    var onTitleCommit: ((String) -> Void)?
 
     var title = "" {
         didSet {
@@ -469,7 +622,7 @@ final class TerminalNodeView: NSView {
     private let titlebarSeparatorView = TerminalOutlineView()
     private let terminalFrameView = TerminalOutlineView()
     private let dragStripView = DragHeaderView()
-    private let titleField = NSTextField(labelWithString: "")
+    private let titleField = EditableCanvasTextField()
     private let closeButton = CursorButton()
     private let terminalView = TerminalWebView()
     private var contentBottomCornerRadius: CGFloat {
@@ -497,9 +650,19 @@ final class TerminalNodeView: NSView {
         titleField.font = .systemFont(ofSize: 12.5, weight: .semibold)
         titleField.alignment = .center
         titleField.textColor = NSColor(calibratedWhite: 0.74, alpha: 1)
-        titleField.lineBreakMode = .byTruncatingTail
         titleField.cell?.lineBreakMode = .byTruncatingTail
         titleField.cell?.usesSingleLineMode = true
+        titleField.isEditable = true
+        titleField.drawsBackground = false
+        titleField.isBordered = false
+        titleField.focusRingType = .none
+        titleField.beginsEditingOnSingleClick = false
+        titleField.onActivate = { [weak self] in
+            self?.onChromeActivation?()
+        }
+        titleField.onCommit = { [weak self] title in
+            self?.onTitleCommit?(title)
+        }
 
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close terminal")
@@ -703,6 +866,328 @@ final class TerminalNodeView: NSView {
         handles[.bottom]?.frame = CGRect(x: cornerHandleSize, y: 0, width: bounds.width - (cornerHandleSize * 2), height: edgeHandleThickness)
         handles[.bottomLeft]?.frame = CGRect(x: 0, y: 0, width: cornerHandleSize, height: cornerHandleSize)
         handles[.left]?.frame = CGRect(x: 0, y: cornerHandleSize, width: edgeHandleThickness, height: bounds.height - (cornerHandleSize * 2))
+    }
+}
+
+final class CanvasTextItemView: NSView {
+    var onActivate: (() -> Void)?
+    var onMove: ((CGPoint) -> Void)?
+    var onResize: ((ResizeHandle, CGPoint) -> Void)?
+    var onTextChange: ((String) -> Void)?
+    var onTextCommit: ((String) -> Void)?
+
+    var text = "" {
+        didSet {
+            textView.text = text
+        }
+    }
+
+    var wrapWidth: CGFloat? {
+        didSet {
+            textView.wrapWidth = wrapWidth.map { max($0, 1) }
+            needsLayout = true
+        }
+    }
+
+    var isSelected = false {
+        didSet {
+            updateAppearance()
+        }
+    }
+
+    private let textView = EditableCanvasTextView()
+    private let horizontalPadding = CanvasGeometry.textPadding.width * 0.5
+    private let verticalPadding = CanvasGeometry.textPadding.height * 0.5
+    private let edgeHandleThickness: CGFloat = 10
+    private let cornerHandleSize: CGFloat = 18
+    private lazy var handles: [ResizeHandle: ResizeHandleView] = [ResizeHandle.left, .right].reduce(into: [ResizeHandle: ResizeHandleView]()) { result, handle in
+        let view = ResizeHandleView(handle: handle)
+        view.onActivate = { [weak self] in
+            self?.onActivate?()
+        }
+        view.onDrag = { [weak self] handle, delta in
+            self?.onResize?(handle, delta)
+        }
+        result[handle] = view
+    }
+
+    init(text: String) {
+        super.init(frame: .zero)
+        self.text = text
+
+        wantsLayer = true
+        layer?.masksToBounds = false
+
+        textView.text = text
+        textView.wrapWidth = nil
+        textView.onActivate = { [weak self] in
+            self?.onActivate?()
+        }
+        textView.onDrag = { [weak self] delta in
+            self?.onMove?(delta)
+        }
+        textView.onChange = { [weak self] value in
+            self?.onTextChange?(value)
+        }
+        textView.onCommit = { [weak self] value in
+            self?.onTextCommit?(value)
+        }
+
+        addSubview(textView)
+        for handleView in handles.values {
+            addSubview(handleView)
+        }
+        updateAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        textView.frame = bounds.insetBy(dx: horizontalPadding, dy: verticalPadding)
+        let verticalHandleHeight = max(bounds.height - (cornerHandleSize * 2), 0)
+        handles[.left]?.frame = CGRect(x: 0, y: cornerHandleSize, width: edgeHandleThickness, height: verticalHandleHeight)
+        handles[.right]?.frame = CGRect(x: bounds.width - edgeHandleThickness, y: cornerHandleSize, width: edgeHandleThickness, height: verticalHandleHeight)
+    }
+
+    func beginEditing() {
+        onActivate?()
+        textView.beginEditing()
+    }
+
+    private func updateAppearance() {
+        let showSelection = isSelected && !textView.isEditing
+        layer?.backgroundColor = showSelection ? NSColor.systemBlue.withAlphaComponent(0.10).cgColor : NSColor.clear.cgColor
+        layer?.borderColor = showSelection ? NSColor.systemBlue.withAlphaComponent(0.85).cgColor : NSColor.clear.cgColor
+        layer?.borderWidth = showSelection ? 1.25 : 0
+        layer?.cornerRadius = 9
+        for handleView in handles.values {
+            handleView.isHidden = !showSelection
+        }
+    }
+}
+
+final class EditableCanvasTextField: NSTextField, NSTextFieldDelegate {
+    var onActivate: (() -> Void)?
+    var onDrag: ((CGPoint) -> Void)?
+    var onCommit: ((String) -> Void)?
+    var beginsEditingOnSingleClick = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        delegate = self
+        isBordered = false
+        drawsBackground = false
+        focusRingType = .none
+        isEditable = true
+        isSelectable = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if currentEditor() != nil {
+            super.mouseDown(with: event)
+            return
+        }
+
+        onActivate?()
+
+        guard beginsEditingOnSingleClick || event.clickCount >= 2 else {
+            return
+        }
+
+        beginEditing()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard currentEditor() == nil else {
+            return
+        }
+
+        onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+    }
+
+    func beginEditing() {
+        window?.makeFirstResponder(self)
+        selectText(nil)
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        onCommit?(stringValue)
+    }
+}
+
+final class EditableCanvasTextView: NSView, NSTextViewDelegate {
+    var onActivate: (() -> Void)?
+    var onDrag: ((CGPoint) -> Void)?
+    var onChange: ((String) -> Void)?
+    var onCommit: ((String) -> Void)?
+
+    var text: String {
+        get { textView.string }
+        set {
+            if textView.string != newValue {
+                textView.string = newValue
+            }
+        }
+    }
+
+    var wrapWidth: CGFloat? {
+        didSet {
+            configureTextContainer()
+        }
+    }
+
+    var isEditing: Bool {
+        window?.firstResponder === textView
+    }
+
+    private let textView: CanvasIntrinsicTextView
+    private let scrollView: NSScrollView
+
+    override init(frame frameRect: NSRect) {
+        let textContainer = NSTextContainer(size: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
+        textContainer.widthTracksTextView = false
+        textContainer.heightTracksTextView = false
+        textContainer.lineFragmentPadding = 0
+
+        let layoutManager = NSLayoutManager()
+        layoutManager.addTextContainer(textContainer)
+        let textStorage = NSTextStorage()
+        textStorage.addLayoutManager(layoutManager)
+
+        textView = CanvasIntrinsicTextView(frame: .zero, textContainer: textContainer)
+        scrollView = NSScrollView(frame: .zero)
+
+        super.init(frame: frameRect)
+
+        wantsLayer = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.hasHorizontalScroller = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = textView
+
+        textView.delegate = self
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.textContainerInset = .zero
+        textView.font = CanvasGeometry.textFont
+        textView.textColor = .white
+        textView.insertionPointColor = .white
+        textView.allowsUndo = true
+        textView.isEditable = false
+        textView.isSelectable = false
+        textView.onActivate = { [weak self] in
+            self?.onActivate?()
+        }
+        textView.onDrag = { [weak self] delta in
+            self?.onDrag?(delta)
+        }
+        textView.onCommit = { [weak self] in
+            self?.endEditing()
+        }
+
+        addSubview(scrollView)
+        configureTextContainer()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        scrollView.frame = bounds
+        textView.frame = bounds
+    }
+
+    func beginEditing() {
+        textView.isEditable = true
+        textView.isSelectable = true
+        window?.makeFirstResponder(textView)
+        textView.setSelectedRange(NSRange(location: textView.string.utf16.count, length: 0))
+    }
+
+    func endEditing() {
+        textView.isEditable = false
+        textView.isSelectable = false
+        onCommit?(textView.string)
+    }
+
+    func textDidChange(_ notification: Notification) {
+        onChange?(textView.string)
+    }
+
+    private func configureTextContainer() {
+        if let wrapWidth {
+            textView.textContainer?.containerSize = CGSize(width: max(wrapWidth, 1), height: CGFloat.greatestFiniteMagnitude)
+            textView.textContainer?.widthTracksTextView = true
+            textView.isHorizontallyResizable = false
+            textView.maxSize = CGSize(width: max(wrapWidth, 1), height: CGFloat.greatestFiniteMagnitude)
+        } else {
+            textView.textContainer?.containerSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            textView.textContainer?.widthTracksTextView = false
+            textView.isHorizontallyResizable = true
+            textView.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        }
+    }
+}
+
+final class CanvasIntrinsicTextView: NSTextView {
+    var onActivate: (() -> Void)?
+    var onDrag: ((CGPoint) -> Void)?
+    var onCommit: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder === self {
+            super.mouseDown(with: event)
+            return
+        }
+
+        onActivate?()
+
+        if event.clickCount >= 2 {
+            isEditable = true
+            isSelectable = true
+            window?.makeFirstResponder(self)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard window?.firstResponder !== self else {
+            super.mouseDragged(with: event)
+            return
+        }
+
+        onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            onCommit?()
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResign = super.resignFirstResponder()
+        if didResign, isEditable || isSelectable {
+            onCommit?()
+        }
+        return didResign
     }
 }
 

@@ -4,6 +4,7 @@ import Foundation
 enum CanvasTool: String, CaseIterable, Identifiable {
     case select
     case terminal
+    case text
 
     var id: String { rawValue }
 
@@ -13,6 +14,8 @@ enum CanvasTool: String, CaseIterable, Identifiable {
             return "Select"
         case .terminal:
             return "Terminal"
+        case .text:
+            return "Text"
         }
     }
 
@@ -22,6 +25,8 @@ enum CanvasTool: String, CaseIterable, Identifiable {
             return "cursorarrow"
         case .terminal:
             return "terminal"
+        case .text:
+            return "textformat"
         }
     }
 }
@@ -35,6 +40,13 @@ struct TerminalNode: Identifiable, Equatable {
     let id: UUID
     var title: String
     var frame: CGRect
+}
+
+struct CanvasTextItem: Identifiable, Equatable {
+    let id: UUID
+    var text: String
+    var frame: CGRect
+    var wrapWidth: CGFloat?
 }
 
 enum ResizeHandle: CaseIterable {

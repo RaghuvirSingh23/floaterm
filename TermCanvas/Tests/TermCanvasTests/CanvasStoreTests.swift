@@ -39,4 +39,30 @@ final class CanvasStoreTests: XCTestCase {
         XCTAssertEqual(movedNode.frame.origin.x, 50, accuracy: 0.0001)
         XCTAssertEqual(movedNode.frame.origin.y, 25, accuracy: 0.0001)
     }
+
+    @MainActor
+    func testSelectElementsInRectFindsTerminalAndText() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 40, y: 40, width: 320, height: 240))
+        let textID = store.createText(at: CGPoint(x: 120, y: 120), content: "Hello")
+
+        store.selectElements(intersecting: CGRect(x: 0, y: 0, width: 200, height: 200))
+
+        XCTAssertTrue(store.selectedElementIDs.contains(nodeID))
+        XCTAssertTrue(store.selectedElementIDs.contains(textID))
+    }
+
+    @MainActor
+    func testDraftTextGrowsWithoutFixedWidthAndDeletesWhenCommittedEmpty() throws {
+        let store = CanvasStore()
+        let textID = store.createText(at: CGPoint(x: 0, y: 0), content: "Hi")
+
+        store.updateTextDraft(id: textID, content: String(repeating: "W", count: 40))
+        let textItem = try XCTUnwrap(store.textItems.first(where: { $0.id == textID }))
+        XCTAssertNil(textItem.wrapWidth)
+        XCTAssertGreaterThan(textItem.frame.width, 420)
+
+        store.commitText(id: textID, content: "   ")
+        XCTAssertFalse(store.textItems.contains(where: { $0.id == textID }))
+    }
 }

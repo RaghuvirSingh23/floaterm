@@ -4,104 +4,137 @@ struct ContentView: View {
     @StateObject private var store = CanvasStore()
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: .top) {
             CanvasViewRepresentable(store: store)
                 .ignoresSafeArea()
 
-            instructionCard
-                .padding(20)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-
-            zoomHUD
-                .padding(20)
+            toolbar
+                .padding(.top, 16)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .toolbar {
-            ToolbarItemGroup {
-                Picker("Tool", selection: $store.tool) {
-                    ForEach(CanvasTool.allCases) { tool in
-                        Label(tool.title, systemImage: tool.symbolName)
-                            .tag(tool)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 250)
-
-                Button {
-                    store.spawnPresetTerminal()
-                } label: {
-                    Label("Quick Terminal", systemImage: "plus.rectangle.on.rectangle")
-                }
-                .help("Spawn a terminal at the center of the current viewport")
-            }
-        }
         .onAppear {
             store.seedInitialNodeIfNeeded()
         }
     }
 
-    private var instructionCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(store.tool == .terminal ? "Drag to size a new terminal" : "Space-drag or scroll to move the canvas")
-                .font(.headline)
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            toolSection
+            separator
+            zoomSection
 
-            Text("Pinch to zoom. Drag a terminal header to move it. Pull edges or corners to resize. Click the red close button to kill a terminal.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 12) {
-                pill("T", "terminal tool")
-                pill("V", "select tool")
-                pill("+ / -", "zoom")
-                pill("delete", "close selected")
+            if store.selectionCount > 0 {
+                separator
+                deleteSection
+                selectionBadge
             }
         }
-        .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 18, x: 0, y: 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
     }
 
-    private var zoomHUD: some View {
-        HStack(spacing: 10) {
-            Button {
-                store.zoom(by: 1 / 1.12, around: CGPoint(x: store.viewportSize.width * 0.5, y: store.viewportSize.height * 0.5))
-            } label: {
-                Image(systemName: "minus")
+    private var toolSection: some View {
+        HStack(spacing: 6) {
+            ForEach(CanvasTool.allCases) { tool in
+                Button {
+                    store.tool = tool
+                } label: {
+                    Label(tool.title, systemImage: tool.symbolName)
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(store.tool == tool ? Color.black : Color.primary)
+                        .background(
+                            Capsule()
+                                .fill(store.tool == tool ? Color.white : Color.white.opacity(0.06))
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(toolHelpText(for: tool))
             }
-            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var zoomSection: some View {
+        HStack(spacing: 6) {
+            toolbarIconButton(systemName: "minus") {
+                store.zoom(by: 1 / 1.12, around: CGPoint(x: store.viewportSize.width * 0.5, y: store.viewportSize.height * 0.5))
+            }
 
             Text("\(Int(store.camera.zoom * 100))%")
-                .font(.system(.body, design: .monospaced, weight: .semibold))
-                .frame(minWidth: 56)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .frame(minWidth: 52)
 
-            Button {
+            toolbarIconButton(systemName: "plus") {
                 store.zoom(by: 1.12, around: CGPoint(x: store.viewportSize.width * 0.5, y: store.viewportSize.height * 0.5))
-            } label: {
-                Image(systemName: "plus")
             }
-            .buttonStyle(.borderedProminent)
-
-            Button("Reset") {
-                store.resetZoom()
-            }
-            .buttonStyle(.bordered)
         }
-        .padding(10)
-        .background(.ultraThinMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)
     }
 
-    private func pill(_ key: String, _ description: String) -> some View {
-        HStack(spacing: 6) {
-            Text(key)
-                .font(.system(.caption, design: .monospaced, weight: .bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    private var deleteSection: some View {
+        Button {
+            store.deleteSelection()
+        } label: {
+            Label("Delete", systemImage: "trash")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(Color(red: 0.98, green: 0.53, blue: 0.50))
+                .background(
+                    Capsule()
+                        .fill(Color.red.opacity(0.10))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Delete the current selection")
+    }
 
-            Text(description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var selectionBadge: some View {
+        Text("\(store.selectionCount) selected")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.05))
+            )
+    }
+
+    private var separator: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.08))
+            .frame(width: 1, height: 30)
+    }
+
+    private func toolbarIconButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .bold))
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(0.06))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toolHelpText(for tool: CanvasTool) -> String {
+        switch tool {
+        case .select:
+            return "Select items. Drag on empty canvas to marquee-select."
+        case .terminal:
+            return "Drag to create a terminal."
+        case .text:
+            return "Click anywhere to place text."
         }
     }
 }
