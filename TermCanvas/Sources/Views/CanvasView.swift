@@ -134,11 +134,8 @@ final class CanvasViewportView: NSView {
         }
 
         let background = NSRect(origin: .zero, size: bounds.size)
-        let gradient = NSGradient(colors: [
-            NSColor(calibratedRed: 0.06, green: 0.08, blue: 0.11, alpha: 1),
-            NSColor(calibratedRed: 0.03, green: 0.04, blue: 0.06, alpha: 1),
-        ])
-        gradient?.draw(in: background, angle: 90)
+        NSColor(calibratedRed: 0.045, green: 0.06, blue: 0.085, alpha: 1).setFill()
+        background.fill()
 
         drawGrid(camera: store.camera, in: dirtyRect)
 
