@@ -437,7 +437,11 @@ final class TerminalNodeView: NSView {
     var onChromeActivation: (() -> Void)?
     var onTerminalActivation: (() -> Void)?
 
-    var title = ""
+    var title = "" {
+        didSet {
+            titleField.stringValue = title
+        }
+    }
 
     var isSelected = false {
         didSet {
@@ -445,15 +449,32 @@ final class TerminalNodeView: NSView {
         }
     }
 
-    private let dragStripHeight: CGFloat = 18
-    private let closeButtonInset: CGFloat = 4
-    private let closeButtonSize: CGFloat = 14
+    private let shellInset: CGFloat = 4
+    private let shellCornerRadius: CGFloat = 10
+    private let titlebarInset: CGFloat = 1
+    private let titlebarHeight: CGFloat = 24
+    private let titleHorizontalInset: CGFloat = 84
+    private let contentHorizontalInset: CGFloat = 1
+    private let contentBottomInset: CGFloat = 1
+    private let contentTopGap: CGFloat = 1
+    private let closeButtonLeadingInset: CGFloat = 12
+    private let closeButtonSize: CGFloat = 10
+    private let chromeLineWidth: CGFloat = 1
+    private let separatorHeight: CGFloat = 1
     private let edgeHandleThickness: CGFloat = 10
     private let cornerHandleSize: CGFloat = 18
 
+    private let shellView = TerminalOutlineView()
+    private let titlebarView = TerminalOutlineView()
+    private let titlebarSeparatorView = TerminalOutlineView()
+    private let terminalFrameView = TerminalOutlineView()
     private let dragStripView = DragHeaderView()
-    private let closeButton = NSButton()
+    private let titleField = NSTextField(labelWithString: "")
+    private let closeButton = CursorButton()
     private let terminalView = TerminalWebView()
+    private var contentBottomCornerRadius: CGFloat {
+        max(shellCornerRadius - shellInset, 0)
+    }
     private lazy var handles: [ResizeHandle: ResizeHandleView] = ResizeHandle.allCases.reduce(into: [:]) { result, handle in
         let view = ResizeHandleView(handle: handle)
         view.onActivate = { [weak self] in
@@ -472,16 +493,28 @@ final class TerminalNodeView: NSView {
         wantsLayer = true
         layer?.cornerRadius = 0
         layer?.masksToBounds = false
+        titleField.stringValue = title
+        titleField.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleField.alignment = .center
+        titleField.textColor = NSColor(calibratedWhite: 0.74, alpha: 1)
+        titleField.lineBreakMode = .byTruncatingTail
+        titleField.cell?.lineBreakMode = .byTruncatingTail
+        titleField.cell?.usesSingleLineMode = true
 
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close terminal")
-        closeButton.contentTintColor = .systemRed
+        closeButton.contentTintColor = NSColor(calibratedRed: 0.34, green: 0.12, blue: 0.11, alpha: 1)
         closeButton.bezelStyle = .regularSquare
         closeButton.target = self
         closeButton.action = #selector(handleClose)
         closeButton.toolTip = "Close terminal"
         closeButton.imageScaling = .scaleProportionallyDown
-        closeButton.isHidden = true
+        closeButton.wantsLayer = true
+        closeButton.layer?.masksToBounds = true
+        if let image = closeButton.image {
+            let configuration = NSImage.SymbolConfiguration(pointSize: 6, weight: .bold)
+            closeButton.image = image.withSymbolConfiguration(configuration)
+        }
 
         dragStripView.onActivate = { [weak self] in
             self?.onChromeActivation?()
@@ -494,13 +527,19 @@ final class TerminalNodeView: NSView {
             self?.onTerminalActivation?()
         }
 
+        dragStripView.addSubview(titleField)
+        addSubview(shellView)
+        addSubview(titlebarView)
+        addSubview(titlebarSeparatorView)
+        addSubview(terminalFrameView)
         addSubview(terminalView)
         addSubview(dragStripView)
-        addSubview(closeButton)
 
         for handleView in handles.values {
             addSubview(handleView)
         }
+
+        addSubview(closeButton)
 
         updateAppearance()
     }
@@ -512,22 +551,75 @@ final class TerminalNodeView: NSView {
     override func layout() {
         super.layout()
 
-        terminalView.frame = bounds
-        terminalView.logicalSize = bounds.size
-        dragStripView.frame = CGRect(
-            x: 0,
-            y: bounds.height - dragStripHeight,
-            width: bounds.width,
-            height: dragStripHeight
+        let shellFrame = bounds.insetBy(dx: shellInset, dy: shellInset)
+        let titlebarFrame = CGRect(
+            x: shellFrame.minX + titlebarInset,
+            y: shellFrame.maxY - titlebarInset - titlebarHeight,
+            width: shellFrame.width - (titlebarInset * 2),
+            height: titlebarHeight
         )
+        let separatorFrame = CGRect(
+            x: titlebarFrame.minX,
+            y: titlebarFrame.minY - separatorHeight,
+            width: titlebarFrame.width,
+            height: separatorHeight
+        )
+        let contentFrame = CGRect(
+            x: shellFrame.minX + contentHorizontalInset,
+            y: shellFrame.minY + contentBottomInset,
+            width: shellFrame.width - (contentHorizontalInset * 2),
+            height: max(separatorFrame.minY - shellFrame.minY - contentBottomInset - contentTopGap, 120)
+        )
+
+        shellView.frame = shellFrame
+        titlebarView.frame = titlebarFrame
+        titlebarSeparatorView.frame = separatorFrame
+        dragStripView.frame = titlebarFrame
+        let titleHeight = ceil(titleField.intrinsicContentSize.height)
+        titleField.frame = CGRect(
+            x: titleHorizontalInset,
+            y: floor((titlebarFrame.height - titleHeight) * 0.5),
+            width: max(titlebarFrame.width - (titleHorizontalInset * 2), 40),
+            height: titleHeight
+        )
+        terminalView.frame = contentFrame
+        terminalView.logicalSize = contentFrame.size
+        terminalView.layer?.cornerRadius = contentBottomCornerRadius
+        terminalView.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        terminalFrameView.frame = contentFrame.insetBy(dx: -1, dy: -1)
         closeButton.frame = CGRect(
-            x: bounds.width - closeButtonSize - closeButtonInset,
-            y: bounds.height - closeButtonSize - closeButtonInset,
+            x: titlebarFrame.minX + closeButtonLeadingInset,
+            y: titlebarFrame.midY - (closeButtonSize * 0.5),
             width: closeButtonSize,
             height: closeButtonSize
         )
+        closeButton.layer?.cornerRadius = closeButtonSize * 0.5
+        dragStripView.cursorExclusionRect = CGRect(
+            x: closeButton.frame.minX - titlebarFrame.minX - 6,
+            y: 0,
+            width: closeButton.frame.width + 12,
+            height: titlebarFrame.height
+        )
 
         layoutResizeHandles()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if !closeButton.isHidden, closeButton.frame.contains(point) {
+            let buttonPoint = convert(point, to: closeButton)
+            return closeButton.hitTest(buttonPoint) ?? closeButton
+        }
+
+        return super.hitTest(point)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+
+        if !closeButton.isHidden {
+            addCursorRect(closeButton.frame, cursor: .pointingHand)
+        }
     }
 
     @objc
@@ -544,7 +636,62 @@ final class TerminalNodeView: NSView {
         layer?.borderWidth = 0
         layer?.borderColor = NSColor.clear.cgColor
         layer?.shadowOpacity = 0
-        closeButton.isHidden = !isSelected
+        let shellBorderColor = NSColor(calibratedWhite: isSelected ? 0.34 : 0.26, alpha: 1)
+        let shellFillColor = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.14, alpha: 0.98)
+        let titlebarFillColor = NSColor(calibratedRed: 0.20, green: 0.21, blue: 0.24, alpha: 0.98)
+        let separatorColor = NSColor(calibratedWhite: 0.30, alpha: 1)
+        let contentBorderColor = NSColor(calibratedWhite: isSelected ? 0.25 : 0.20, alpha: 1)
+        let titleColor = NSColor(calibratedWhite: isSelected ? 0.84 : 0.70, alpha: 1)
+        let closeButtonFillColor = NSColor(calibratedRed: 1.0, green: 0.37, blue: 0.33, alpha: isSelected ? 1 : 0.92)
+        let closeButtonGlyphColor = NSColor(calibratedRed: 0.34, green: 0.12, blue: 0.11, alpha: 0.96)
+
+        closeButton.isHidden = false
+        closeButton.contentTintColor = closeButtonGlyphColor
+        closeButton.layer?.backgroundColor = closeButtonFillColor.cgColor
+        titleField.textColor = titleColor
+
+        shellView.apply(
+            cornerRadius: shellCornerRadius,
+            borderWidth: chromeLineWidth,
+            borderColor: shellBorderColor,
+            backgroundColor: shellFillColor,
+            shadowOpacity: isSelected ? 0.20 : 0.12,
+            shadowRadius: isSelected ? 12 : 8
+        )
+        titlebarView.apply(
+            cornerRadius: max(shellCornerRadius - titlebarInset, 0),
+            borderWidth: 0,
+            borderColor: .clear,
+            backgroundColor: titlebarFillColor,
+            shadowOpacity: 0,
+            shadowRadius: 0,
+            maskedCorners: [.layerMinXMaxYCorner, .layerMaxXMaxYCorner],
+            masksToBounds: true
+        )
+        titlebarSeparatorView.apply(
+            cornerRadius: 0,
+            borderWidth: 0,
+            borderColor: .clear,
+            backgroundColor: separatorColor,
+            shadowOpacity: 0,
+            shadowRadius: 0
+        )
+        terminalFrameView.apply(
+            cornerRadius: contentBottomCornerRadius,
+            borderWidth: chromeLineWidth,
+            borderColor: contentBorderColor,
+            backgroundColor: .clear,
+            shadowOpacity: 0,
+            shadowRadius: 0,
+            maskedCorners: [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        )
+        dragStripView.applyStyle(
+            cornerRadius: 0,
+            borderWidth: 0,
+            borderColor: .clear,
+            backgroundColor: .clear
+        )
+        window?.invalidateCursorRects(for: self)
     }
 
     private func layoutResizeHandles() {
@@ -559,9 +706,55 @@ final class TerminalNodeView: NSView {
     }
 }
 
+final class TerminalOutlineView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.cornerRadius = 0
+        layer?.masksToBounds = false
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    func apply(
+        cornerRadius: CGFloat,
+        borderWidth: CGFloat,
+        borderColor: NSColor,
+        backgroundColor: NSColor,
+        shadowOpacity: Float,
+        shadowRadius: CGFloat,
+        maskedCorners: CACornerMask = [
+            .layerMinXMinYCorner,
+            .layerMaxXMinYCorner,
+            .layerMinXMaxYCorner,
+            .layerMaxXMaxYCorner,
+        ],
+        masksToBounds: Bool = false
+    ) {
+        layer?.cornerRadius = cornerRadius
+        layer?.borderWidth = borderWidth
+        layer?.borderColor = borderColor.cgColor
+        layer?.backgroundColor = backgroundColor.cgColor
+        layer?.maskedCorners = maskedCorners
+        layer?.masksToBounds = masksToBounds
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOffset = .zero
+        layer?.shadowRadius = shadowRadius
+        layer?.shadowOpacity = shadowOpacity
+    }
+}
+
 final class DragHeaderView: NSView {
     var onDrag: ((CGPoint) -> Void)?
     var onActivate: (() -> Void)?
+    var cursorExclusionRect: CGRect?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -572,7 +765,26 @@ final class DragHeaderView: NSView {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .openHand)
+        guard let exclusion = cursorExclusionRect?.intersection(bounds), !exclusion.isEmpty else {
+            addCursorRect(bounds, cursor: .openHand)
+            return
+        }
+
+        let leftWidth = max(exclusion.minX, 0)
+        if leftWidth > 0 {
+            addCursorRect(
+                CGRect(x: 0, y: 0, width: leftWidth, height: bounds.height),
+                cursor: .openHand
+            )
+        }
+
+        let rightX = min(max(exclusion.maxX, 0), bounds.width)
+        if rightX < bounds.width {
+            addCursorRect(
+                CGRect(x: rightX, y: 0, width: bounds.width - rightX, height: bounds.height),
+                cursor: .openHand
+            )
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -582,12 +794,29 @@ final class DragHeaderView: NSView {
     override func mouseDragged(with event: NSEvent) {
         onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
     }
+
+    func applyStyle(cornerRadius: CGFloat, borderWidth: CGFloat, borderColor: NSColor, backgroundColor: NSColor) {
+        wantsLayer = true
+        layer?.cornerRadius = cornerRadius
+        layer?.borderWidth = borderWidth
+        layer?.borderColor = borderColor.cgColor
+        layer?.backgroundColor = backgroundColor.cgColor
+    }
+}
+
+final class CursorButton: NSButton {
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
 }
 
 final class ResizeHandleView: NSView {
     let handle: ResizeHandle
     var onDrag: ((ResizeHandle, CGPoint) -> Void)?
     var onActivate: (() -> Void)?
+
+    private static let diagonalDescendingCursor = privateResizeCursor(named: "_windowResizeNorthWestSouthEastCursor")
+    private static let diagonalAscendingCursor = privateResizeCursor(named: "_windowResizeNorthEastSouthWestCursor")
 
     init(handle: ResizeHandle) {
         self.handle = handle
@@ -606,8 +835,10 @@ final class ResizeHandleView: NSView {
             cursor = .resizeLeftRight
         case .top, .bottom:
             cursor = .resizeUpDown
-        default:
-            cursor = .crosshair
+        case .topLeft, .bottomRight:
+            cursor = Self.diagonalDescendingCursor
+        case .topRight, .bottomLeft:
+            cursor = Self.diagonalAscendingCursor
         }
 
         addCursorRect(bounds, cursor: cursor)
@@ -619,6 +850,19 @@ final class ResizeHandleView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         onDrag?(handle, CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+    }
+
+    private static func privateResizeCursor(named selectorName: String) -> NSCursor {
+        let selector = Selector(selectorName)
+        guard
+            NSCursor.responds(to: selector),
+            let unmanaged = NSCursor.perform(selector),
+            let cursor = unmanaged.takeUnretainedValue() as? NSCursor
+        else {
+            return .crosshair
+        }
+
+        return cursor
     }
 }
 
