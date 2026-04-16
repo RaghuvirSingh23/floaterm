@@ -585,7 +585,7 @@ final class TerminalNodeView: NSView {
         terminalView.frame = contentFrame
         terminalView.logicalSize = contentFrame.size
         terminalView.layer?.cornerRadius = contentBottomCornerRadius
-        terminalView.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        terminalView.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         terminalFrameView.frame = contentFrame.insetBy(dx: -1, dy: -1)
         closeButton.frame = CGRect(
             x: titlebarFrame.minX + closeButtonLeadingInset,
