@@ -1,15 +1,39 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var store = CanvasStore()
+    private let appModel: AppModel
+    @ObservedObject private var store: CanvasStore
+    @ObservedObject private var settings: AppSettingsStore
+    @State private var isShowingSettings = false
+
+    init(appModel: AppModel = .shared) {
+        self.appModel = appModel
+        _store = ObservedObject(wrappedValue: appModel.store)
+        _settings = ObservedObject(wrappedValue: appModel.settings)
+    }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            CanvasViewRepresentable(store: store)
+        ZStack {
+            CanvasViewRepresentable(store: store, appModel: appModel)
                 .ignoresSafeArea()
 
-            toolbar
+            VStack(spacing: 0) {
+                toolbar
+                    .padding(.top, 16)
+
+                Spacer()
+            }
+
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    settingsButton
+                }
                 .padding(.top, 16)
+                .padding(.horizontal, 16)
+
+                Spacer()
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
@@ -37,6 +61,51 @@ struct ContentView: View {
                 .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+    }
+
+    private var settingsButton: some View {
+        Button {
+            isShowingSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 38, height: 38)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isShowingSettings, arrowEdge: .top) {
+            settingsPopover
+        }
+        .help("Terminal persistence settings")
+    }
+
+    private var settingsPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Settings")
+                .font(.system(size: 17, weight: .semibold))
+
+            Text("Terminal Persistence")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Picker("Terminal Persistence", selection: $settings.terminalPersistenceMode) {
+                ForEach(TerminalPersistenceMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(settings.terminalPersistenceMode.summary)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(width: 340)
     }
 
     private var toolSection: some View {

@@ -4,15 +4,16 @@ import WebKit
 
 struct CanvasViewRepresentable: NSViewRepresentable {
     @ObservedObject var store: CanvasStore
+    let appModel: AppModel
 
     func makeNSView(context: Context) -> CanvasViewportView {
         let view = CanvasViewportView()
-        view.apply(store: store)
+        view.apply(store: store, appModel: appModel)
         return view
     }
 
     func updateNSView(_ nsView: CanvasViewportView, context: Context) {
-        nsView.apply(store: store)
+        nsView.apply(store: store, appModel: appModel)
     }
 }
 
@@ -65,6 +66,7 @@ final class CanvasViewportView: NSView {
     }
 
     private weak var store: CanvasStore?
+    private weak var appModel: AppModel?
     private let worldView = NSView()
     private var nodeViews: [UUID: TerminalNodeView] = [:]
     private var textViews: [UUID: CanvasTextItemView] = [:]
@@ -112,8 +114,9 @@ final class CanvasViewportView: NSView {
         needsDisplay = true
     }
 
-    func apply(store: CanvasStore) {
+    func apply(store: CanvasStore, appModel: AppModel) {
         self.store = store
+        self.appModel = appModel
         store.updateViewportSize(bounds.size)
 
         if !hasBootstrappedCamera, !bounds.size.equalTo(.zero) {
@@ -389,12 +392,15 @@ final class CanvasViewportView: NSView {
             if let existing = nodeViews[node.id] {
                 view = existing
             } else {
-                let created = TerminalNodeView(title: node.title)
+                let created = TerminalNodeView(
+                    title: node.title,
+                    initialTranscript: appModel?.restoredTranscript(for: node.id)
+                )
                 created.onMove = { [weak self] delta in
-                    self?.store?.moveSelection(anchorID: node.id, byScreenDelta: delta)
+                    self?.store?.moveSelection(anchorID: node.id, byScreenDelta: delta) ?? .none
                 }
                 created.onResize = { [weak self] handle, delta in
-                    self?.store?.resizeNode(id: node.id, handle: handle, byScreenDelta: delta)
+                    self?.store?.resizeNode(id: node.id, handle: handle, byScreenDelta: delta) ?? .none
                 }
                 created.onClose = { [weak self] in
                     self?.store?.removeNode(id: node.id)
@@ -409,6 +415,9 @@ final class CanvasViewportView: NSView {
                 }
                 created.onTitleCommit = { [weak self] title in
                     self?.store?.renameNode(id: node.id, title: title)
+                }
+                created.onSessionOutput = { [weak self] data in
+                    self?.appModel?.recordTerminalOutput(data, for: node.id)
                 }
                 worldView.addSubview(created)
                 nodeViews[node.id] = created
@@ -450,10 +459,10 @@ final class CanvasViewportView: NSView {
                     self?.window?.makeFirstResponder(self)
                 }
                 created.onMove = { [weak self] delta in
-                    self?.store?.moveSelection(anchorID: item.id, byScreenDelta: delta)
+                    self?.store?.moveSelection(anchorID: item.id, byScreenDelta: delta) ?? .none
                 }
                 created.onResize = { [weak self] handle, delta in
-                    self?.store?.resizeTextItem(id: item.id, handle: handle, byScreenDelta: delta)
+                    self?.store?.resizeTextItem(id: item.id, handle: handle, byScreenDelta: delta) ?? .none
                 }
                 created.onTextChange = { [weak self] text in
                     self?.store?.updateTextDraft(id: item.id, content: text)
@@ -581,12 +590,13 @@ final class CanvasViewportView: NSView {
 }
 
 final class TerminalNodeView: NSView {
-    var onMove: ((CGPoint) -> Void)?
-    var onResize: ((ResizeHandle, CGPoint) -> Void)?
+    var onMove: ((CGPoint) -> CanvasSnapState)?
+    var onResize: ((ResizeHandle, CGPoint) -> CanvasSnapState)?
     var onClose: (() -> Void)?
     var onChromeActivation: (() -> Void)?
     var onTerminalActivation: (() -> Void)?
     var onTitleCommit: ((String) -> Void)?
+    var onSessionOutput: ((Data) -> Void)?
 
     var title = "" {
         didSet {
@@ -631,7 +641,7 @@ final class TerminalNodeView: NSView {
     private let titleEditor = InlineTitleEditorView()
     private let closeButton = CursorButton()
     private let editTitleButton = IconClickView()
-    private let terminalView = TerminalWebView()
+    private let terminalView: TerminalWebView
     private var contentBottomCornerRadius: CGFloat {
         max(shellCornerRadius - shellInset, 0)
     }
@@ -641,12 +651,13 @@ final class TerminalNodeView: NSView {
             self?.onChromeActivation?()
         }
         view.onDrag = { [weak self] dragHandle, delta in
-            self?.onResize?(dragHandle, delta)
+            self?.onResize?(dragHandle, delta) ?? .none
         }
         result[handle] = view
     }
 
-    init(title: String) {
+    init(title: String, initialTranscript: Data? = nil) {
+        terminalView = TerminalWebView(initialTranscript: initialTranscript)
         super.init(frame: .zero)
         self.title = title
 
@@ -700,7 +711,7 @@ final class TerminalNodeView: NSView {
             self?.onChromeActivation?()
         }
         dragStripView.onDrag = { [weak self] delta in
-            self?.onMove?(delta)
+            self?.onMove?(delta) ?? .none
         }
         dragStripView.onEditTitle = { [weak self] in
             self?.beginTitleEditing()
@@ -711,6 +722,9 @@ final class TerminalNodeView: NSView {
 
         terminalView.onActivate = { [weak self] in
             self?.onTerminalActivation?()
+        }
+        terminalView.onOutput = { [weak self] data in
+            self?.onSessionOutput?(data)
         }
 
         addSubview(shellView)
@@ -941,8 +955,8 @@ final class TerminalNodeView: NSView {
 
 final class CanvasTextItemView: NSView {
     var onActivate: (() -> Void)?
-    var onMove: ((CGPoint) -> Void)?
-    var onResize: ((ResizeHandle, CGPoint) -> Void)?
+    var onMove: ((CGPoint) -> CanvasSnapState)?
+    var onResize: ((ResizeHandle, CGPoint) -> CanvasSnapState)?
     var onTextChange: ((String) -> Void)?
     var onTextCommit: ((String) -> Void)?
 
@@ -976,7 +990,7 @@ final class CanvasTextItemView: NSView {
             self?.onActivate?()
         }
         view.onDrag = { [weak self] handle, delta in
-            self?.onResize?(handle, delta)
+            self?.onResize?(handle, delta) ?? .none
         }
         result[handle] = view
     }
@@ -994,7 +1008,7 @@ final class CanvasTextItemView: NSView {
             self?.onActivate?()
         }
         textView.onDrag = { [weak self] delta in
-            self?.onMove?(delta)
+            self?.onMove?(delta) ?? .none
         }
         textView.onChange = { [weak self] value in
             self?.onTextChange?(value)
@@ -1234,7 +1248,7 @@ final class TitleEditingTextView: NSTextView {
 
 final class EditableCanvasTextView: NSView, NSTextViewDelegate {
     var onActivate: (() -> Void)?
-    var onDrag: ((CGPoint) -> Void)?
+    var onDrag: ((CGPoint) -> CanvasSnapState)?
     var onChange: ((String) -> Void)?
     var onCommit: ((String) -> Void)?
 
@@ -1302,7 +1316,7 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
             self?.onActivate?()
         }
         textView.onDrag = { [weak self] delta in
-            self?.onDrag?(delta)
+            self?.onDrag?(delta) ?? .none
         }
         textView.onCommit = { [weak self] in
             self?.endEditing()
@@ -1356,8 +1370,10 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
 
 final class CanvasIntrinsicTextView: NSTextView {
     var onActivate: (() -> Void)?
-    var onDrag: ((CGPoint) -> Void)?
+    var onDrag: ((CGPoint) -> CanvasSnapState)?
     var onCommit: (() -> Void)?
+
+    private let snapFeedbackTracker = SnapFeedbackTracker()
 
     override func mouseDown(with event: NSEvent) {
         if window?.firstResponder === self {
@@ -1366,6 +1382,7 @@ final class CanvasIntrinsicTextView: NSTextView {
         }
 
         onActivate?()
+        snapFeedbackTracker.reset()
 
         if event.clickCount >= 2 {
             isEditable = true
@@ -1380,7 +1397,13 @@ final class CanvasIntrinsicTextView: NSTextView {
             return
         }
 
-        onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+        let snapState = onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+        snapFeedbackTracker.update(with: snapState)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        snapFeedbackTracker.reset()
+        super.mouseUp(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -1394,6 +1417,7 @@ final class CanvasIntrinsicTextView: NSTextView {
 
     override func resignFirstResponder() -> Bool {
         let didResign = super.resignFirstResponder()
+        snapFeedbackTracker.reset()
         if didResign, isEditable || isSelectable {
             onCommit?()
         }
@@ -1504,8 +1528,32 @@ final class DashedSelectionOutlineView: NSView {
     }
 }
 
+final class SnapFeedbackTracker {
+    private var lastSnapState = CanvasSnapState.none
+
+    func reset() {
+        lastSnapState = .none
+    }
+
+    func update(with snapState: CanvasSnapState?) {
+        let snapState = snapState ?? .none
+
+        guard snapState.isActive else {
+            lastSnapState = .none
+            return
+        }
+
+        guard snapState != lastSnapState else {
+            return
+        }
+
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        lastSnapState = snapState
+    }
+}
+
 final class DragHeaderView: NSView {
-    var onDrag: ((CGPoint) -> Void)?
+    var onDrag: ((CGPoint) -> CanvasSnapState)?
     var onActivate: (() -> Void)?
     var onEditTitle: (() -> Void)?
     var onClose: (() -> Void)?
@@ -1519,6 +1567,7 @@ final class DragHeaderView: NSView {
     }
 
     private var interaction: Interaction?
+    private let snapFeedbackTracker = SnapFeedbackTracker()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1572,16 +1621,19 @@ final class DragHeaderView: NSView {
 
         if closeActionRect.contains(point) {
             interaction = .close
+            snapFeedbackTracker.reset()
             return
         }
 
         if editActionRect.contains(point) {
             interaction = nil
+            snapFeedbackTracker.reset()
             onEditTitle?()
             return
         }
 
         interaction = .drag
+        snapFeedbackTracker.reset()
         onActivate?()
     }
 
@@ -1590,11 +1642,13 @@ final class DragHeaderView: NSView {
             return
         }
 
-        onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+        let snapState = onDrag?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+        snapFeedbackTracker.update(with: snapState)
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { interaction = nil }
+        snapFeedbackTracker.reset()
 
         let point = convert(event.locationInWindow, from: nil)
 
@@ -1688,11 +1742,12 @@ final class IconClickView: NSView {
 
 final class ResizeHandleView: NSView {
     let handle: ResizeHandle
-    var onDrag: ((ResizeHandle, CGPoint) -> Void)?
+    var onDrag: ((ResizeHandle, CGPoint) -> CanvasSnapState)?
     var onActivate: (() -> Void)?
 
     private static let diagonalDescendingCursor = privateResizeCursor(named: "_windowResizeNorthWestSouthEastCursor")
     private static let diagonalAscendingCursor = privateResizeCursor(named: "_windowResizeNorthEastSouthWestCursor")
+    private let snapFeedbackTracker = SnapFeedbackTracker()
 
     init(handle: ResizeHandle) {
         self.handle = handle
@@ -1721,11 +1776,17 @@ final class ResizeHandleView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        snapFeedbackTracker.reset()
         onActivate?()
     }
 
     override func mouseDragged(with event: NSEvent) {
-        onDrag?(handle, CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+        let snapState = onDrag?(handle, CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+        snapFeedbackTracker.update(with: snapState)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        snapFeedbackTracker.reset()
     }
 
     private static func privateResizeCursor(named selectorName: String) -> NSCursor {
@@ -1744,6 +1805,7 @@ final class ResizeHandleView: NSView {
 
 final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHandler {
     var onActivate: (() -> Void)?
+    var onOutput: ((Data) -> Void)?
 
     var logicalSize: CGSize = .zero {
         didSet {
@@ -1760,8 +1822,10 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
     private var bufferedChunks: [String] = []
     private var lastGridSize = TerminalGridSize(columns: 100, rows: 30)
     private var lastFittedLogicalSize: CGSize = .zero
+    private let initialTranscript: Data?
 
-    init() {
+    init(initialTranscript: Data? = nil) {
+        self.initialTranscript = initialTranscript
         let controller = WKUserContentController()
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
@@ -1777,6 +1841,9 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
         layer?.masksToBounds = true
 
         loadFrontend()
+        if let initialTranscript, !initialTranscript.isEmpty {
+            appendOutput(initialTranscript, persist: false)
+        }
         startSession()
     }
 
@@ -1880,13 +1947,29 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
         }
     }
 
-    private func appendOutput(_ data: Data) {
-        let payload = data.base64EncodedString()
+    private func appendOutput(_ data: Data, persist: Bool = true) {
+        guard !data.isEmpty else {
+            return
+        }
 
-        if isReady {
-            evaluateJavaScript("window.termBridge && window.termBridge.writeBase64('\(payload)');")
-        } else {
-            bufferedChunks.append(payload)
+        if persist {
+            onOutput?(data)
+        }
+
+        let chunkSize = 24 * 1024
+        var offset = data.startIndex
+
+        while offset < data.endIndex {
+            let end = min(offset + chunkSize, data.endIndex)
+            let payload = data[offset..<end].base64EncodedString()
+
+            if isReady {
+                evaluateJavaScript("window.termBridge && window.termBridge.writeBase64('\(payload)');")
+            } else {
+                bufferedChunks.append(payload)
+            }
+
+            offset = end
         }
     }
 

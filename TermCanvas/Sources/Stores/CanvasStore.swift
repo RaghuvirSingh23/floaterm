@@ -17,8 +17,27 @@ final class CanvasStore: ObservableObject {
     private var terminalCounter = 1
     private var didSeedInitialNode = false
 
+    init(snapshot: WorkspaceSnapshot? = nil) {
+        if let snapshot {
+            nodes = snapshot.nodes
+            textItems = snapshot.textItems
+            camera = snapshot.camera
+            terminalCounter = max(snapshot.terminalCounter, snapshot.nodes.count + 1)
+            didSeedInitialNode = true
+        }
+    }
+
     var selectionCount: Int {
         selectedElementIDs.count
+    }
+
+    var workspaceSnapshot: WorkspaceSnapshot {
+        WorkspaceSnapshot(
+            nodes: nodes,
+            textItems: textItems,
+            camera: camera,
+            terminalCounter: terminalCounter
+        )
     }
 
     func seedInitialNodeIfNeeded() {
@@ -202,8 +221,12 @@ final class CanvasStore: ObservableObject {
         }
     }
 
-    func resizeTextItem(id: UUID, handle: ResizeHandle, byScreenDelta delta: CGPoint) {
+    @discardableResult
+    func resizeTextItem(id: UUID, handle: ResizeHandle, byScreenDelta delta: CGPoint) -> CanvasSnapState {
         let deltaInWorld = CGPoint(x: delta.x / camera.zoom, y: delta.y / camera.zoom)
+        let step = CanvasGeometry.adaptiveGridStep(for: camera)
+        let threshold = CanvasGeometry.gridSnapThreshold(for: camera)
+        var feedbackState = CanvasSnapState.none
 
         mutateTextItem(id: id) { item in
             let minimumWidth = CanvasGeometry.minimumTextFrameWidth(for: item.text)
@@ -227,28 +250,66 @@ final class CanvasStore: ObservableObject {
             } else if case .bottomLeft = handle {
                 item.frame.origin.x = resizedFrame.maxX - measuredSize.width
             }
+
+            switch handle {
+            case .topLeft, .bottomLeft, .left:
+                feedbackState.x = CanvasGeometry.snappedValue(item.frame.minX, step: step, threshold: threshold)
+            case .topRight, .bottomRight, .right:
+                feedbackState.x = CanvasGeometry.snappedValue(item.frame.maxX, step: step, threshold: threshold)
+            case .top, .bottom:
+                break
+            }
         }
+
+        return feedbackState
     }
 
-    func moveSelection(anchorID: UUID, byScreenDelta delta: CGPoint) {
+    @discardableResult
+    func moveSelection(anchorID: UUID, byScreenDelta delta: CGPoint) -> CanvasSnapState {
         let targetIDs = selectedElementIDs.contains(anchorID) ? selectedElementIDs : [anchorID]
-        moveElements(ids: targetIDs, byScreenDelta: delta)
+        return moveElements(ids: targetIDs, anchorID: anchorID, byScreenDelta: delta)
     }
 
-    func moveTextItem(id: UUID, byScreenDelta delta: CGPoint) {
-        moveElements(ids: [id], byScreenDelta: delta)
+    @discardableResult
+    func moveTextItem(id: UUID, byScreenDelta delta: CGPoint) -> CanvasSnapState {
+        moveElements(ids: [id], anchorID: id, byScreenDelta: delta)
     }
 
-    func moveNode(id: UUID, byScreenDelta delta: CGPoint) {
+    @discardableResult
+    func moveNode(id: UUID, byScreenDelta delta: CGPoint) -> CanvasSnapState {
         moveSelection(anchorID: id, byScreenDelta: delta)
     }
 
-    func resizeNode(id: UUID, handle: ResizeHandle, byScreenDelta delta: CGPoint) {
+    @discardableResult
+    func resizeNode(id: UUID, handle: ResizeHandle, byScreenDelta delta: CGPoint) -> CanvasSnapState {
         let deltaInWorld = CGPoint(x: delta.x / camera.zoom, y: delta.y / camera.zoom)
+        let step = CanvasGeometry.adaptiveGridStep(for: camera)
+        let threshold = CanvasGeometry.gridSnapThreshold(for: camera)
+        var feedbackState = CanvasSnapState.none
 
         mutateNode(id: id) { node in
             node.frame = CanvasGeometry.resized(frame: node.frame, handle: handle, deltaInWorld: deltaInWorld)
+
+            switch handle {
+            case .topLeft, .bottomLeft, .left:
+                feedbackState.x = CanvasGeometry.snappedValue(node.frame.minX, step: step, threshold: threshold)
+            case .topRight, .bottomRight, .right:
+                feedbackState.x = CanvasGeometry.snappedValue(node.frame.maxX, step: step, threshold: threshold)
+            case .top, .bottom:
+                break
+            }
+
+            switch handle {
+            case .topLeft, .topRight, .top:
+                feedbackState.y = CanvasGeometry.snappedValue(node.frame.maxY, step: step, threshold: threshold)
+            case .bottomLeft, .bottomRight, .bottom:
+                feedbackState.y = CanvasGeometry.snappedValue(node.frame.minY, step: step, threshold: threshold)
+            case .left, .right:
+                break
+            }
         }
+
+        return feedbackState
     }
 
     func panBy(_ delta: CGPoint) {
@@ -268,7 +329,7 @@ final class CanvasStore: ObservableObject {
         camera.zoom = 1
     }
 
-    private func moveElements(ids: Set<UUID>, byScreenDelta delta: CGPoint) {
+    private func moveElements(ids: Set<UUID>, anchorID: UUID, byScreenDelta delta: CGPoint) -> CanvasSnapState {
         let deltaInWorld = CGPoint(x: delta.x / camera.zoom, y: delta.y / camera.zoom)
 
         for id in ids {
@@ -282,6 +343,24 @@ final class CanvasStore: ObservableObject {
                 item.frame.origin.y += deltaInWorld.y
             }
         }
+
+        guard let anchorFrame = frame(for: anchorID) else {
+            return .none
+        }
+
+        let step = CanvasGeometry.adaptiveGridStep(for: camera)
+        let threshold = CanvasGeometry.gridSnapThreshold(for: camera)
+        var feedbackState = CanvasSnapState.none
+
+        if abs(deltaInWorld.x) > 0.0001 {
+            feedbackState.x = CanvasGeometry.snappedValue(anchorFrame.origin.x, step: step, threshold: threshold)
+        }
+
+        if abs(deltaInWorld.y) > 0.0001 {
+            feedbackState.y = CanvasGeometry.snappedValue(anchorFrame.origin.y, step: step, threshold: threshold)
+        }
+
+        return feedbackState
     }
 
     private func bringSelectionToFront() {
@@ -312,5 +391,17 @@ final class CanvasStore: ObservableObject {
         }
 
         mutate(&textItems[index])
+    }
+
+    private func frame(for id: UUID) -> CGRect? {
+        if let node = nodes.first(where: { $0.id == id }) {
+            return node.frame
+        }
+
+        if let textItem = textItems.first(where: { $0.id == id }) {
+            return textItem.frame
+        }
+
+        return nil
     }
 }

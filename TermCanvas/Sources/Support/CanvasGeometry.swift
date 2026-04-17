@@ -9,6 +9,7 @@ enum CanvasGeometry {
     static let minimumZoom: CGFloat = 0.35
     static let maximumZoom: CGFloat = 2.6
     static let baseGridStep: CGFloat = 48
+    static let snapThresholdInScreenPoints: CGFloat = 10
 
     @MainActor
     static var textFont: NSFont {
@@ -88,6 +89,15 @@ enum CanvasGeometry {
         }
 
         return step
+    }
+
+    static func gridSnapThreshold(for camera: CanvasCamera) -> CGFloat {
+        snapThresholdInScreenPoints / camera.zoom
+    }
+
+    static func snappedValue(_ value: CGFloat, step: CGFloat, threshold: CGFloat) -> CGFloat? {
+        let snapped = (value / step).rounded() * step
+        return abs(value - snapped) <= threshold ? snapped : nil
     }
 
     @MainActor

@@ -41,6 +41,30 @@ final class CanvasStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testMoveNodeReportsGridFeedbackWithoutSnapping() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+
+        let feedbackState = store.moveNode(id: nodeID, byScreenDelta: CGPoint(x: 47, y: 0))
+
+        let movedNode = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID }))
+        XCTAssertEqual(movedNode.frame.origin.x, 47, accuracy: 0.0001)
+        XCTAssertEqual(feedbackState, CanvasSnapState(x: 48, y: nil))
+    }
+
+    @MainActor
+    func testResizeNodeReportsGridFeedbackWithoutSnapping() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+
+        let feedbackState = store.resizeNode(id: nodeID, handle: .right, byScreenDelta: CGPoint(x: 14, y: 0))
+
+        let resizedNode = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID }))
+        XCTAssertEqual(resizedNode.frame.maxX, 334, accuracy: 0.0001)
+        XCTAssertEqual(feedbackState, CanvasSnapState(x: 336, y: nil))
+    }
+
+    @MainActor
     func testSelectElementsInRectFindsTerminalAndText() throws {
         let store = CanvasStore()
         let nodeID = store.createTerminal(frame: CGRect(x: 40, y: 40, width: 320, height: 240))
@@ -103,5 +127,35 @@ final class CanvasStoreTests: XCTestCase {
 
         let renamedNode = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID }))
         XCTAssertEqual(renamedNode.title, "12345678901234567890")
+    }
+
+    @MainActor
+    func testStoreRestoresWorkspaceSnapshotAndCounter() throws {
+        let restoredNode = TerminalNode(
+            id: UUID(),
+            title: "TERM 07",
+            frame: CGRect(x: 80, y: 120, width: 520, height: 320)
+        )
+        let restoredText = CanvasTextItem(
+            id: UUID(),
+            text: "deploy notes",
+            frame: CGRect(x: 40, y: 40, width: 200, height: 80),
+            wrapWidth: 160
+        )
+        let snapshot = WorkspaceSnapshot(
+            nodes: [restoredNode],
+            textItems: [restoredText],
+            camera: CanvasCamera(zoom: 1.4, pan: CGPoint(x: 280, y: 190)),
+            terminalCounter: 8
+        )
+        let store = CanvasStore(snapshot: snapshot)
+
+        XCTAssertEqual(store.nodes, [restoredNode])
+        XCTAssertEqual(store.textItems, [restoredText])
+        XCTAssertEqual(store.camera, snapshot.camera)
+
+        let newID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let newNode = try XCTUnwrap(store.nodes.first(where: { $0.id == newID }))
+        XCTAssertEqual(newNode.title, "TERM 08")
     }
 }
