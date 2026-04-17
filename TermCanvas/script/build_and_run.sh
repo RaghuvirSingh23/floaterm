@@ -14,6 +14,9 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+APP_ICON_SOURCE="$ROOT_DIR/Assets/AppIcon.png"
+APP_ICON_NAME="AppIcon.icns"
+APP_ICON_PATH="$APP_RESOURCES/$APP_ICON_NAME"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -31,6 +34,42 @@ find "$BUILD_DIR" -maxdepth 1 -name '*.bundle' -print0 | while IFS= read -r -d '
   cp -R "$bundle" "$APP_RESOURCES/"
 done
 
+generate_app_icon() {
+  if [[ ! -f "$APP_ICON_SOURCE" ]]; then
+    echo "warning: missing app icon source at $APP_ICON_SOURCE" >&2
+    return
+  fi
+
+  local icon_work_dir
+  local iconset_dir
+
+  icon_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/termcanvas-icon.XXXXXX")"
+  iconset_dir="$icon_work_dir/AppIcon.iconset"
+  mkdir -p "$iconset_dir"
+
+  resize_icon() {
+    local size="$1"
+    local filename="$2"
+    sips -z "$size" "$size" "$APP_ICON_SOURCE" --out "$iconset_dir/$filename" >/dev/null
+  }
+
+  resize_icon 16 "icon_16x16.png"
+  resize_icon 32 "icon_16x16@2x.png"
+  resize_icon 32 "icon_32x32.png"
+  resize_icon 64 "icon_32x32@2x.png"
+  resize_icon 128 "icon_128x128.png"
+  resize_icon 256 "icon_128x128@2x.png"
+  resize_icon 256 "icon_256x256.png"
+  resize_icon 512 "icon_256x256@2x.png"
+  resize_icon 512 "icon_512x512.png"
+  resize_icon 1024 "icon_512x512@2x.png"
+
+  iconutil -c icns "$iconset_dir" -o "$APP_ICON_PATH"
+  rm -rf "$icon_work_dir"
+}
+
+generate_app_icon
+
 cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -42,6 +81,8 @@ cat >"$INFO_PLIST" <<PLIST
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
   <string>$APP_NAME</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>LSMinimumSystemVersion</key>
