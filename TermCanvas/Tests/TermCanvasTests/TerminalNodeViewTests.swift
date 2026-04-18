@@ -62,7 +62,7 @@ final class TerminalNodeViewTests: XCTestCase {
         hitView.mouseDown(with: down)
         hitView.mouseUp(with: up)
 
-        let timeout = Date().addingTimeInterval(0.2)
+        let timeout = Date().addingTimeInterval(1.0)
         while !editor.isEditing, Date() < timeout {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }

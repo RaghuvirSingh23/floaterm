@@ -17,6 +17,7 @@ final class CanvasStore: ObservableObject {
     @Published private(set) var viewportSize: CGSize = .zero
     @Published var pendingTextEditID: UUID?
     @Published var pendingTerminalFocusID: UUID?
+    @Published private(set) var minimapActivityTick = 0
 
     private var terminalCounter = 1
     private var frameCounter = 1
@@ -53,6 +54,18 @@ final class CanvasStore: ObservableObject {
 
     var canBroadcastSelectedTerminals: Bool {
         selectedTerminalCount > 1
+    }
+
+    var visibleWorldRect: CGRect {
+        CanvasGeometry.visibleWorldRect(camera: camera, viewportSize: viewportSize)
+    }
+
+    var contentBounds: CGRect? {
+        CanvasGeometry.union(of: frameItems.map(\.frame) + nodes.map(\.frame) + textItems.map(\.frame))
+    }
+
+    var minimapWorldBounds: CGRect {
+        CanvasGeometry.minimapWorldBounds(contentBounds: contentBounds, visibleRect: visibleWorldRect)
     }
 
     var workspaceSnapshot: WorkspaceSnapshot {
@@ -402,6 +415,7 @@ final class CanvasStore: ObservableObject {
         }
 
         updateFrameMemberships(for: [id])
+        registerMinimapActivity()
         return feedbackState
     }
 
@@ -451,6 +465,7 @@ final class CanvasStore: ObservableObject {
         }
 
         updateFrameMemberships(for: [id])
+        registerMinimapActivity()
         return feedbackState
     }
 
@@ -483,24 +498,45 @@ final class CanvasStore: ObservableObject {
             }
         }
 
+        registerMinimapActivity()
         return feedbackState
     }
 
     func panBy(_ delta: CGPoint) {
         camera.pan.x += delta.x
         camera.pan.y += delta.y
+        registerMinimapActivity()
     }
 
     func setPan(_ value: CGPoint) {
         camera.pan = value
+        registerMinimapActivity()
     }
 
     func zoom(by factor: CGFloat, around anchorInScreen: CGPoint) {
         camera = CanvasGeometry.zoomed(camera: camera, factor: factor, anchorInScreen: anchorInScreen)
+        registerMinimapActivity()
     }
 
     func resetZoom() {
-        camera.zoom = 1
+        let preferredBounds = bounds(for: selectedElementIDs) ?? contentBounds
+        let preferredFocusPoint = preferredBounds.map { CGPoint(x: $0.midX, y: $0.midY) } ?? .zero
+        centerCamera(on: preferredFocusPoint, zoom: 1)
+    }
+
+    func centerCamera(on worldPoint: CGPoint, zoom: CGFloat? = nil) {
+        let nextZoom = zoom.map(CanvasGeometry.clampZoom) ?? camera.zoom
+
+        guard viewportSize.width > 0, viewportSize.height > 0 else {
+            camera.zoom = nextZoom
+            return
+        }
+
+        camera = CanvasCamera(
+            zoom: nextZoom,
+            pan: CanvasGeometry.centeredPan(for: worldPoint, viewportSize: viewportSize, zoom: nextZoom)
+        )
+        registerMinimapActivity()
     }
 
     private var selectedFrameableElementIDs: Set<UUID> {
@@ -513,6 +549,10 @@ final class CanvasStore: ObservableObject {
         }
 
         isTerminalBroadcastEnabled = false
+    }
+
+    private func registerMinimapActivity() {
+        minimapActivityTick &+= 1
     }
 
     private func moveTargetIDs(forAnchorID anchorID: UUID) -> Set<UUID> {
@@ -583,6 +623,7 @@ final class CanvasStore: ObservableObject {
             feedbackState.y = CanvasGeometry.snappedValue(anchorFrame.origin.y, step: step, threshold: threshold)
         }
 
+        registerMinimapActivity()
         return feedbackState
     }
 
@@ -651,6 +692,14 @@ final class CanvasStore: ObservableObject {
         let orderedNodes = nodes.filter { ids.contains($0.id) }.map(\.id)
         let orderedText = textItems.filter { ids.contains($0.id) }.map(\.id)
         return orderedNodes + orderedText
+    }
+
+    private func bounds(for ids: Set<UUID>) -> CGRect? {
+        CanvasGeometry.union(of:
+            frameItems.filter { ids.contains($0.id) }.map(\.frame) +
+            nodes.filter { ids.contains($0.id) }.map(\.frame) +
+            textItems.filter { ids.contains($0.id) }.map(\.frame)
+        )
     }
 
     private func childIDs(forFrameID id: UUID) -> [UUID] {

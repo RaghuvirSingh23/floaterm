@@ -15,6 +15,50 @@ final class CanvasStoreTests: XCTestCase {
         XCTAssertEqual(worldPointBefore.y, worldPointAfter.y, accuracy: 0.0001)
     }
 
+    @MainActor
+    func testResetZoomCentersOnSelectionAtOneHundredPercent() {
+        let store = CanvasStore()
+        store.updateViewportSize(CGSize(width: 1000, height: 800))
+        _ = store.createTerminal(frame: CGRect(x: 100, y: 100, width: 320, height: 240))
+        let selectedID = store.createTerminal(frame: CGRect(x: 900, y: 500, width: 320, height: 240))
+        store.camera = CanvasCamera(zoom: 1.8, pan: CGPoint(x: -240, y: 120))
+        store.setSelection([selectedID])
+
+        store.resetZoom()
+
+        XCTAssertEqual(store.camera.zoom, 1, accuracy: 0.0001)
+        XCTAssertEqual(store.camera.pan.x, -560, accuracy: 0.0001)
+        XCTAssertEqual(store.camera.pan.y, -220, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testCameraInteractionIncrementsMinimapActivityTick() {
+        let store = CanvasStore()
+        let initialTick = store.minimapActivityTick
+
+        store.panBy(CGPoint(x: 40, y: 20))
+        XCTAssertEqual(store.minimapActivityTick, initialTick + 1)
+
+        store.zoom(by: 1.12, around: CGPoint(x: 400, y: 300))
+        XCTAssertEqual(store.minimapActivityTick, initialTick + 2)
+    }
+
+    @MainActor
+    func testResetZoomCentersOnAllContentWithoutSelection() {
+        let store = CanvasStore()
+        store.updateViewportSize(CGSize(width: 1000, height: 800))
+        _ = store.createTerminal(frame: CGRect(x: 100, y: 100, width: 320, height: 240))
+        _ = store.createTerminal(frame: CGRect(x: 900, y: 500, width: 320, height: 240))
+        store.camera = CanvasCamera(zoom: 2.2, pan: CGPoint(x: 180, y: -40))
+        store.clearSelection()
+
+        store.resetZoom()
+
+        XCTAssertEqual(store.camera.zoom, 1, accuracy: 0.0001)
+        XCTAssertEqual(store.camera.pan.x, -160, accuracy: 0.0001)
+        XCTAssertEqual(store.camera.pan.y, -20, accuracy: 0.0001)
+    }
+
     func testResizeClampsToMinimumFromLeftEdge() {
         let frame = CGRect(x: 10, y: 20, width: 320, height: 240)
         let resized = CanvasGeometry.resized(

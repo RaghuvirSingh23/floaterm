@@ -59,6 +59,70 @@ enum CanvasGeometry {
         )
     }
 
+    static func visibleWorldRect(camera: CanvasCamera, viewportSize: CGSize) -> CGRect {
+        guard viewportSize.width > 0, viewportSize.height > 0 else {
+            return .zero
+        }
+
+        return CGRect(
+            origin: CGPoint(
+                x: -camera.pan.x / camera.zoom,
+                y: -camera.pan.y / camera.zoom
+            ),
+            size: CGSize(
+                width: viewportSize.width / camera.zoom,
+                height: viewportSize.height / camera.zoom
+            )
+        )
+    }
+
+    static func centeredPan(for worldPoint: CGPoint, viewportSize: CGSize, zoom: CGFloat) -> CGPoint {
+        CGPoint(
+            x: viewportSize.width * 0.5 - worldPoint.x * zoom,
+            y: viewportSize.height * 0.5 - worldPoint.y * zoom
+        )
+    }
+
+    static func union(of rects: [CGRect]) -> CGRect? {
+        rects.reduce(nil) { partialResult, rect in
+            guard !rect.isNull, !rect.isEmpty else {
+                return partialResult
+            }
+
+            return partialResult.map { $0.union(rect) } ?? rect
+        }
+    }
+
+    static func minimapWorldBounds(contentBounds: CGRect?, visibleRect: CGRect) -> CGRect {
+        let baseBounds = union(of: [contentBounds, visibleRect].compactMap { $0 }) ?? CGRect(
+            x: -defaultFrameSize.width * 0.5,
+            y: -defaultFrameSize.height * 0.5,
+            width: defaultFrameSize.width,
+            height: defaultFrameSize.height
+        )
+
+        let padding = max(baseGridStep * 2, min(baseBounds.width, baseBounds.height) * 0.12)
+        let paddedBounds = baseBounds.insetBy(dx: -padding, dy: -padding)
+        let minimumWidth = max(visibleRect.width * 1.1, defaultFrameSize.width)
+        let minimumHeight = max(visibleRect.height * 1.1, defaultFrameSize.height)
+
+        guard paddedBounds.width < minimumWidth || paddedBounds.height < minimumHeight else {
+            return paddedBounds
+        }
+
+        let expandedSize = CGSize(
+            width: max(paddedBounds.width, minimumWidth),
+            height: max(paddedBounds.height, minimumHeight)
+        )
+
+        return CGRect(
+            x: paddedBounds.midX - expandedSize.width * 0.5,
+            y: paddedBounds.midY - expandedSize.height * 0.5,
+            width: expandedSize.width,
+            height: expandedSize.height
+        )
+    }
+
     static func resized(frame: CGRect, handle: ResizeHandle, deltaInWorld: CGPoint) -> CGRect {
         resized(frame: frame, handle: handle, deltaInWorld: deltaInWorld, minimumSize: minimumNodeSize)
     }

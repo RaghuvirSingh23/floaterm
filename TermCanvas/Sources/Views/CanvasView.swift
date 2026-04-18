@@ -1686,8 +1686,18 @@ final class InlineTitleEditorView: NSView, NSTextViewDelegate {
             return
         }
 
+        let selectionRange = NSRange(location: 0, length: textView.string.utf16.count)
         window.makeFirstResponder(textView)
-        textView.setSelectedRange(NSRange(location: 0, length: textView.string.utf16.count))
+        textView.setSelectedRange(selectionRange)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window, !self.isEditing else {
+                return
+            }
+
+            window.makeFirstResponder(self.textView)
+            self.textView.setSelectedRange(selectionRange)
+        }
     }
 
     func currentEditor() -> NSTextView? {

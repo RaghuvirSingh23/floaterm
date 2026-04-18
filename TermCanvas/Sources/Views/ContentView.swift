@@ -5,6 +5,8 @@ struct ContentView: View {
     @ObservedObject private var store: CanvasStore
     @ObservedObject private var settings: AppSettingsStore
     @State private var isShowingSettings = false
+    @State private var isMinimapExpanded = false
+    @State private var minimapCollapseTask: Task<Void, Never>?
 
     init(appModel: AppModel = .shared) {
         self.appModel = appModel
@@ -34,10 +36,24 @@ struct ContentView: View {
 
                 Spacer()
             }
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                HStack {
+                    Spacer()
+                    CanvasMinimapView(store: store, isExpanded: isMinimapExpanded)
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             store.seedInitialNodeIfNeeded()
+        }
+        .onChange(of: store.minimapActivityTick) { _, _ in
+            pulseMinimap()
         }
     }
 
@@ -154,6 +170,21 @@ struct ContentView: View {
             toolbarIconButton(systemName: "plus") {
                 store.zoom(by: 1.12, around: CGPoint(x: store.viewportSize.width * 0.5, y: store.viewportSize.height * 0.5))
             }
+
+            Button {
+                store.resetZoom()
+            } label: {
+                Text("100%")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.06))
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Reset zoom to 100% and center on the current selection or canvas content")
         }
     }
 
@@ -255,6 +286,25 @@ struct ContentView: View {
             return "Drag to create a frame."
         case .text:
             return "Click anywhere to place text."
+        }
+    }
+
+    private func pulseMinimap() {
+        minimapCollapseTask?.cancel()
+
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            isMinimapExpanded = true
+        }
+
+        minimapCollapseTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(850))
+            guard !Task.isCancelled else {
+                return
+            }
+
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.90)) {
+                isMinimapExpanded = false
+            }
         }
     }
 }
