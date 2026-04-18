@@ -13,9 +13,16 @@ final class CanvasViewportInteractionTests: XCTestCase {
         let (_, rootView, viewport) = makeHostedViewport(store: store)
         let nodeView = try XCTUnwrap(findSubview(in: viewport, as: TerminalNodeView.self))
         let dragStrip = try XCTUnwrap(findSubview(in: nodeView, as: DragHeaderView.self))
-        let localPoint = nodeView.convert(CGPoint(x: dragStrip.bounds.midX, y: dragStrip.bounds.midY), from: dragStrip)
-        let rootPoint = rootView.convert(localPoint, from: nodeView)
-        let hitView = try XCTUnwrap(rootView.hitTest(rootPoint))
+        let hitView = try XCTUnwrap(
+            waitForHitView(in: rootView) {
+                let localPoint = nodeView.convert(
+                    CGPoint(x: dragStrip.bounds.midX, y: dragStrip.bounds.midY),
+                    from: dragStrip
+                )
+                let rootPoint = rootView.convert(localPoint, from: nodeView)
+                return rootView.hitTest(rootPoint)
+            }
+        )
 
         XCTAssertNotNil(findAncestor(of: hitView, as: TerminalNodeView.self))
         XCTAssertFalse(hitView is CanvasFrameItemView, "Expected terminal layer to win hit-testing, got \(type(of: hitView))")
@@ -78,9 +85,28 @@ final class CanvasViewportInteractionTests: XCTestCase {
         rootView.addSubview(viewport)
         viewport.apply(store: store, appModel: appModel)
         window.makeKeyAndOrderFront(nil)
+        window.displayIfNeeded()
         rootView.layoutSubtreeIfNeeded()
+        rootView.displayIfNeeded()
         viewport.layoutSubtreeIfNeeded()
+        viewport.displayIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         return (window, rootView, viewport)
+    }
+
+    private func waitForHitView(in rootView: NSView, timeout: TimeInterval = 1.0, resolver: () -> NSView?) -> NSView? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var hitView = resolver()
+
+        while hitView == nil, Date() < deadline {
+            rootView.window?.displayIfNeeded()
+            rootView.layoutSubtreeIfNeeded()
+            rootView.displayIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            hitView = resolver()
+        }
+
+        return hitView
     }
 
     private func findSubview<T: NSView>(in root: NSView, as type: T.Type) -> T? {
