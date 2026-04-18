@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class AppSettingsStore: ObservableObject {
     private let userDefaults: UserDefaults
-    private let terminalPersistenceModeKey = "termcanvas.terminalPersistenceMode"
+    private let terminalPersistenceModeKey = "floaterm.terminalPersistenceMode"
 
     @Published var terminalPersistenceMode: TerminalPersistenceMode {
         didSet {

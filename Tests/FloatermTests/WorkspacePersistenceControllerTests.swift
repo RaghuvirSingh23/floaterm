@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import TermCanvas
+@testable import Floaterm
 
 @MainActor
 final class WorkspacePersistenceControllerTests: XCTestCase {

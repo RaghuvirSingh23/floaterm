@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-@testable import TermCanvas
+@testable import Floaterm
 
 @MainActor
 final class TerminalNodeViewTests: XCTestCase {

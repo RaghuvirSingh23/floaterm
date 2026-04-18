@@ -1,4 +1,4 @@
-# TermCanvas: Next Ideas
+# floaterm: Next Ideas
 
 ## Best Next Additions
 
@@ -57,4 +57,3 @@
 - Heavy window chrome
 - Theme work before workflow depth
 - Collaboration or sync before local persistence is solid
-

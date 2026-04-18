@@ -22,7 +22,7 @@ final class TerminalSession: @unchecked Sendable {
     var onData: ((Data) -> Void)?
     var onExit: (() -> Void)?
 
-    private let ioQueue = DispatchQueue(label: "com.raghusi.TermCanvas.terminal")
+    private let ioQueue = DispatchQueue(label: "com.raghusi.floaterm.terminal")
     private var readSource: DispatchSourceRead?
     private var isClosed = false
     private(set) var masterFD: Int32 = -1

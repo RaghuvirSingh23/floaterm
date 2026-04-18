@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-@testable import TermCanvas
+@testable import Floaterm
 
 final class CanvasStoreTests: XCTestCase {
     func testZoomKeepsAnchorStable() {

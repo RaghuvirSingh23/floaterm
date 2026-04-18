@@ -2,8 +2,9 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="TermCanvas"
-BUNDLE_ID="com.raghusi.TermCanvas"
+APP_NAME="floaterm"
+BUILD_TARGET_NAME="Floaterm"
+BUNDLE_ID="com.raghusi.floaterm"
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,7 +24,7 @@ pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 swift build
 
 BUILD_DIR="$(swift build --show-bin-path)"
-BUILD_BINARY="$BUILD_DIR/$APP_NAME"
+BUILD_BINARY="$BUILD_DIR/$BUILD_TARGET_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
@@ -43,7 +44,7 @@ generate_app_icon() {
   local icon_work_dir
   local iconset_dir
 
-  icon_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/termcanvas-icon.XXXXXX")"
+  icon_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/floaterm-icon.XXXXXX")"
   iconset_dir="$icon_work_dir/AppIcon.iconset"
   mkdir -p "$iconset_dir"
 

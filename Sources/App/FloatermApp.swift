@@ -2,11 +2,11 @@ import AppKit
 import SwiftUI
 
 @main
-struct TermCanvasApp: App {
+struct FloatermApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("TermCanvas", id: "main") {
+        Window("floaterm", id: "main") {
             ContentView()
                 .frame(minWidth: 1100, minHeight: 720)
         }

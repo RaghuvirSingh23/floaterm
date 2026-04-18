@@ -3,27 +3,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "TermCanvas",
+    name: "Floaterm",
     platforms: [
         .macOS(.v14),
     ],
     products: [
         .executable(
-            name: "TermCanvas",
-            targets: ["TermCanvas"]
+            name: "Floaterm",
+            targets: ["Floaterm"]
         ),
     ],
     targets: [
         .executableTarget(
-            name: "TermCanvas",
+            name: "Floaterm",
             path: "Sources",
             resources: [
                 .copy("Resources/Terminal"),
             ]
         ),
         .testTarget(
-            name: "TermCanvasTests",
-            dependencies: ["TermCanvas"]
+            name: "FloatermTests",
+            dependencies: ["Floaterm"],
+            path: "Tests/FloatermTests"
         ),
     ]
 )

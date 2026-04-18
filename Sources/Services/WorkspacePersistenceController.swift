@@ -16,7 +16,7 @@ struct PersistedWorkspaceEnvelope: Codable, Equatable {
 final class WorkspacePersistenceController {
     private let fileURL: URL
     private let fileManager: FileManager
-    private let ioQueue = DispatchQueue(label: "com.raghusi.TermCanvas.persistence", qos: .utility)
+    private let ioQueue = DispatchQueue(label: "com.raghusi.floaterm.persistence", qos: .utility)
     private let saveDelay: TimeInterval
     private let transcriptByteLimit: Int
 
@@ -154,7 +154,7 @@ final class WorkspacePersistenceController {
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
 
         return applicationSupport
-            .appendingPathComponent("TermCanvas", isDirectory: true)
+            .appendingPathComponent("floaterm", isDirectory: true)
             .appendingPathComponent("workspace.json", isDirectory: false)
     }
 }
