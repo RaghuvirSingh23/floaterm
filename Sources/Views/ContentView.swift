@@ -1,0 +1,310 @@
+import SwiftUI
+
+struct ContentView: View {
+    private let appModel: AppModel
+    @ObservedObject private var store: CanvasStore
+    @ObservedObject private var settings: AppSettingsStore
+    @State private var isShowingSettings = false
+    @State private var isMinimapExpanded = false
+    @State private var minimapCollapseTask: Task<Void, Never>?
+
+    init(appModel: AppModel = .shared) {
+        self.appModel = appModel
+        _store = ObservedObject(wrappedValue: appModel.store)
+        _settings = ObservedObject(wrappedValue: appModel.settings)
+    }
+
+    var body: some View {
+        ZStack {
+            CanvasViewRepresentable(store: store, appModel: appModel)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                toolbar
+                    .padding(.top, 16)
+
+                Spacer()
+            }
+
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    settingsButton
+                }
+                .padding(.top, 16)
+                .padding(.horizontal, 16)
+
+                Spacer()
+            }
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                HStack {
+                    Spacer()
+                    CanvasMinimapView(store: store, isExpanded: isMinimapExpanded)
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear {
+            store.seedInitialNodeIfNeeded()
+        }
+        .onChange(of: store.minimapActivityTick) { _, _ in
+            pulseMinimap()
+        }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            toolSection
+            separator
+            zoomSection
+
+            if store.selectionCount > 0 {
+                if store.canBroadcastSelectedTerminals {
+                    separator
+                    broadcastSection
+                }
+
+                if store.canWrapSelectionInFrame {
+                    separator
+                    frameSection
+                }
+
+                separator
+                deleteSection
+                selectionBadge
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+    }
+
+    private var settingsButton: some View {
+        Button {
+            isShowingSettings = true
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 38, height: 38)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isShowingSettings, arrowEdge: .top) {
+            settingsPopover
+        }
+        .help("Terminal persistence settings")
+    }
+
+    private var settingsPopover: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Settings")
+                .font(.system(size: 17, weight: .semibold))
+
+            Text("Terminal Persistence")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Picker("Terminal Persistence", selection: $settings.terminalPersistenceMode) {
+                ForEach(TerminalPersistenceMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(settings.terminalPersistenceMode.summary)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+
+    private var toolSection: some View {
+        HStack(spacing: 6) {
+            ForEach(CanvasTool.allCases) { tool in
+                Button {
+                    store.tool = tool
+                } label: {
+                    Label(tool.title, systemImage: tool.symbolName)
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(store.tool == tool ? Color.black : Color.primary)
+                        .background(
+                            Capsule()
+                                .fill(store.tool == tool ? Color.white : Color.white.opacity(0.06))
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(toolHelpText(for: tool))
+            }
+        }
+    }
+
+    private var zoomSection: some View {
+        HStack(spacing: 6) {
+            toolbarIconButton(systemName: "minus") {
+                store.zoom(by: 1 / 1.12, around: CGPoint(x: store.viewportSize.width * 0.5, y: store.viewportSize.height * 0.5))
+            }
+
+            Text("\(Int(store.camera.zoom * 100))%")
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .frame(minWidth: 52)
+
+            toolbarIconButton(systemName: "plus") {
+                store.zoom(by: 1.12, around: CGPoint(x: store.viewportSize.width * 0.5, y: store.viewportSize.height * 0.5))
+            }
+
+            Button {
+                store.resetZoom()
+            } label: {
+                Text("100%")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.06))
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Reset zoom to 100% and center on the current selection or canvas content")
+        }
+    }
+
+    private var deleteSection: some View {
+        Button {
+            store.deleteSelection()
+        } label: {
+            Label("Delete", systemImage: "trash")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(Color(red: 0.98, green: 0.53, blue: 0.50))
+                .background(
+                    Capsule()
+                        .fill(Color.red.opacity(0.10))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Delete the current selection")
+    }
+
+    private var broadcastSection: some View {
+        Button {
+            store.setTerminalBroadcastEnabled(!store.isTerminalBroadcastEnabled)
+            if store.isTerminalBroadcastEnabled {
+                store.requestFocusOnSelectedTerminal()
+            }
+        } label: {
+            Label("Broadcast", systemImage: "dot.radiowaves.left.and.right")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(store.isTerminalBroadcastEnabled ? Color.black : Color(red: 0.76, green: 0.90, blue: 1.0))
+                .background(
+                    Capsule()
+                        .fill(store.isTerminalBroadcastEnabled ? Color(red: 0.74, green: 0.90, blue: 1.0) : Color.cyan.opacity(0.12))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Mirror typed input from one selected terminal to the others")
+    }
+
+    private var frameSection: some View {
+        Button {
+            _ = store.wrapSelectionInFrame()
+        } label: {
+            Label("Frame", systemImage: "square.on.square.dashed")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(Color(red: 1.0, green: 0.83, blue: 0.52))
+                .background(
+                    Capsule()
+                        .fill(Color.orange.opacity(0.11))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Wrap the current selection in a frame")
+    }
+
+    private var selectionBadge: some View {
+        Text("\(store.selectionCount) selected")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.05))
+            )
+    }
+
+    private var separator: some View {
+        Capsule()
+            .fill(Color.white.opacity(0.08))
+            .frame(width: 1, height: 30)
+    }
+
+    private func toolbarIconButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .bold))
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(0.06))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toolHelpText(for tool: CanvasTool) -> String {
+        switch tool {
+        case .select:
+            return "Select items. Drag on empty canvas to marquee-select."
+        case .terminal:
+            return "Drag to create a terminal."
+        case .frame:
+            return "Drag to create a frame."
+        case .text:
+            return "Click anywhere to place text."
+        }
+    }
+
+    private func pulseMinimap() {
+        minimapCollapseTask?.cancel()
+
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            isMinimapExpanded = true
+        }
+
+        minimapCollapseTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(850))
+            guard !Task.isCancelled else {
+                return
+            }
+
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.90)) {
+                isMinimapExpanded = false
+            }
+        }
+    }
+}

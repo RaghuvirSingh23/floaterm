@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <link rel="stylesheet" href="xterm.css" />
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #terminal {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      .xterm {
+        height: 100%;
+      }
+
+      .xterm .xterm-screen,
+      .xterm .xterm-screen canvas,
+      .xterm-viewport {
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+
+      .xterm-viewport {
+        overflow: hidden !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="terminal"></div>
+
+    <script src="xterm.js"></script>
+    <script src="addon-fit.js"></script>
+    <script>
+      const container = document.getElementById("terminal");
+      const term = new Terminal({
+        allowTransparency: false,
+        cursorBlink: true,
+        cursorStyle: "block",
+        fontFamily: '"SF Mono", Menlo, Monaco, monospace',
+        fontSize: 13,
+        letterSpacing: 0.2,
+        lineHeight: 1.15,
+        macOptionIsMeta: true,
+        scrollback: 6000,
+        theme: {
+          background: "#000000",
+          foreground: "#ffffff",
+          cursor: "#ffffff",
+          selectionBackground: "#444444",
+          black: "#000000",
+          red: "#cd3131",
+          green: "#0dbc79",
+          yellow: "#e5e510",
+          blue: "#2472c8",
+          magenta: "#bc3fbc",
+          cyan: "#11a8cd",
+          white: "#e5e5e5",
+          brightBlack: "#666666",
+          brightRed: "#f14c4c",
+          brightGreen: "#23d18b",
+          brightYellow: "#f5f543",
+          brightBlue: "#3b8eea",
+          brightMagenta: "#d670d6",
+          brightCyan: "#29b8db",
+          brightWhite: "#ffffff"
+        }
+      });
+      const fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(container);
+
+      const encoder = new TextEncoder();
+
+      function post(message) {
+        const handler = window.webkit?.messageHandlers?.terminal;
+        if (handler) {
+          handler.postMessage(message);
+        }
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = "";
+        for (const byte of bytes) {
+          binary += String.fromCharCode(byte);
+        }
+        return btoa(binary);
+      }
+
+      function base64ToBytes(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
+      }
+
+      function fit() {
+        fitAddon.fit();
+        post({ type: "resize", cols: term.cols, rows: term.rows });
+      }
+
+      term.onData((data) => {
+        post({ type: "input", data: bytesToBase64(encoder.encode(data)) });
+      });
+
+      term.onKey(() => {
+        term.focus();
+      });
+
+      document.addEventListener("mousedown", () => term.focus());
+      window.addEventListener("focus", () => term.focus());
+
+      window.termBridge = {
+        focus() {
+          term.focus();
+        },
+        fit,
+        markExited() {
+          term.write("\r\n\x1b[90m[terminal exited]\x1b[0m\r\n");
+        },
+        writeBase64(base64) {
+          term.write(base64ToBytes(base64));
+        }
+      };
+
+      window.requestAnimationFrame(() => {
+        term.focus();
+      });
+    </script>
+  </body>
+</html>
