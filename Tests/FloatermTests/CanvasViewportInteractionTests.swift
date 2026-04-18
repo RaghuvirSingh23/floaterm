@@ -12,13 +12,9 @@ final class CanvasViewportInteractionTests: XCTestCase {
 
         let (_, rootView, viewport) = makeHostedViewport(store: store)
         let nodeView = try XCTUnwrap(findSubview(in: viewport, as: TerminalNodeView.self))
-        let dragStrip = try XCTUnwrap(findSubview(in: nodeView, as: DragHeaderView.self))
         let hitView = try XCTUnwrap(
             waitForHitView(in: rootView) {
-                let localPoint = nodeView.convert(
-                    CGPoint(x: dragStrip.bounds.midX, y: dragStrip.bounds.midY),
-                    from: dragStrip
-                )
+                let localPoint = CGPoint(x: nodeView.bounds.midX, y: nodeView.bounds.midY)
                 let rootPoint = rootView.convert(localPoint, from: nodeView)
                 return rootView.hitTest(rootPoint)
             }
