@@ -9,6 +9,7 @@ final class WorkspacePersistenceControllerTests: XCTestCase {
         let fileURL = rootURL.appendingPathComponent("workspace.json", isDirectory: false)
         let controller = WorkspacePersistenceController(fileURL: fileURL, saveDelay: 0)
         let terminalID = UUID()
+        let frameID = UUID()
         let snapshot = WorkspaceSnapshot(
             nodes: [
                 TerminalNode(
@@ -17,9 +18,18 @@ final class WorkspacePersistenceControllerTests: XCTestCase {
                     frame: CGRect(x: 10, y: 20, width: 520, height: 320)
                 ),
             ],
+            frameItems: [
+                CanvasFrameItem(
+                    id: frameID,
+                    title: "FRAME 01",
+                    frame: CGRect(x: 0, y: 0, width: 620, height: 420),
+                    childIDs: [terminalID]
+                ),
+            ],
             textItems: [],
             camera: CanvasCamera(zoom: 1.15, pan: CGPoint(x: 120, y: 80)),
-            terminalCounter: 2
+            terminalCounter: 2,
+            frameCounter: 2
         )
 
         controller.noteCanvasChanged(snapshot)
@@ -45,9 +55,18 @@ final class WorkspacePersistenceControllerTests: XCTestCase {
                     frame: CGRect(x: 10, y: 20, width: 520, height: 320)
                 ),
             ],
+            frameItems: [
+                CanvasFrameItem(
+                    id: UUID(),
+                    title: "FRAME 01",
+                    frame: CGRect(x: 0, y: 0, width: 620, height: 420),
+                    childIDs: [terminalID]
+                ),
+            ],
             textItems: [],
             camera: CanvasCamera(),
-            terminalCounter: 2
+            terminalCounter: 2,
+            frameCounter: 2
         )
 
         controller.noteCanvasChanged(snapshot)
@@ -56,9 +75,11 @@ final class WorkspacePersistenceControllerTests: XCTestCase {
 
         let prunedSnapshot = WorkspaceSnapshot(
             nodes: [],
+            frameItems: [],
             textItems: [],
             camera: CanvasCamera(),
-            terminalCounter: 2
+            terminalCounter: 2,
+            frameCounter: 2
         )
         controller.noteCanvasChanged(prunedSnapshot)
         controller.flush(canvas: prunedSnapshot)

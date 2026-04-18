@@ -18,20 +18,31 @@ struct CanvasViewRepresentable: NSViewRepresentable {
 }
 
 final class CanvasViewportView: NSView {
+    private enum LayerDepth {
+        static let frameBase: CGFloat = 0
+        static let nodeBase: CGFloat = 10_000
+        static let textBase: CGFloat = 20_000
+        static let selectedBoost: CGFloat = 1_000
+    }
+
     private enum Interaction {
         case panning(anchor: CGPoint, initialPan: CGPoint)
         case creatingTerminal(startScreen: CGPoint, currentScreen: CGPoint)
+        case creatingFrame(startScreen: CGPoint, currentScreen: CGPoint)
         case marqueeSelecting(startScreen: CGPoint, currentScreen: CGPoint, appendToSelection: Bool)
     }
 
     private enum PreviewStyle {
         case terminalCreation
+        case frameCreation
         case selection
 
         var fillColor: NSColor {
             switch self {
             case .terminalCreation:
                 return NSColor.systemMint.withAlphaComponent(0.14)
+            case .frameCreation:
+                return NSColor.systemOrange.withAlphaComponent(0.10)
             case .selection:
                 return NSColor.systemBlue.withAlphaComponent(0.12)
             }
@@ -41,6 +52,8 @@ final class CanvasViewportView: NSView {
             switch self {
             case .terminalCreation:
                 return NSColor.systemMint.withAlphaComponent(0.9)
+            case .frameCreation:
+                return NSColor.systemOrange.withAlphaComponent(0.94)
             case .selection:
                 return NSColor.systemBlue.withAlphaComponent(0.96)
             }
@@ -50,6 +63,8 @@ final class CanvasViewportView: NSView {
             switch self {
             case .terminalCreation:
                 return [10, 7]
+            case .frameCreation:
+                return [10, 6]
             case .selection:
                 return [8, 5]
             }
@@ -59,6 +74,8 @@ final class CanvasViewportView: NSView {
             switch self {
             case .terminalCreation:
                 return 18
+            case .frameCreation:
+                return 14
             case .selection:
                 return 10
             }
@@ -68,6 +85,7 @@ final class CanvasViewportView: NSView {
     private weak var store: CanvasStore?
     private weak var appModel: AppModel?
     private let worldView = NSView()
+    private var frameViews: [UUID: CanvasFrameItemView] = [:]
     private var nodeViews: [UUID: TerminalNodeView] = [:]
     private var textViews: [UUID: CanvasTextItemView] = [:]
     private var interaction: Interaction?
@@ -188,6 +206,11 @@ final class CanvasViewportView: NSView {
             previewWorldRect = normalizedWorldRect(from: location, to: location)
             previewStyle = .terminalCreation
             needsDisplay = true
+        case .frame:
+            interaction = .creatingFrame(startScreen: location, currentScreen: location)
+            previewWorldRect = normalizedWorldRect(from: location, to: location)
+            previewStyle = .frameCreation
+            needsDisplay = true
         case .text:
             _ = store.createText(at: worldPoint(fromScreenPoint: location))
             store.tool = .select
@@ -208,6 +231,9 @@ final class CanvasViewportView: NSView {
             updateWorldViewTransform()
         case let .creatingTerminal(startScreen, _):
             self.interaction = .creatingTerminal(startScreen: startScreen, currentScreen: location)
+            previewWorldRect = normalizedWorldRect(from: startScreen, to: location)
+        case let .creatingFrame(startScreen, _):
+            self.interaction = .creatingFrame(startScreen: startScreen, currentScreen: location)
             previewWorldRect = normalizedWorldRect(from: startScreen, to: location)
         case let .marqueeSelecting(startScreen, _, appendToSelection):
             self.interaction = .marqueeSelecting(
@@ -258,6 +284,21 @@ final class CanvasViewportView: NSView {
             }
 
             _ = store.createTerminal(frame: frame)
+            store.tool = .select
+        case let .creatingFrame(startScreen, currentScreen):
+            var frame = normalizedWorldRect(from: startScreen, to: currentScreen)
+
+            if frame.width < 24 || frame.height < 24 {
+                let worldPoint = worldPoint(fromScreenPoint: currentScreen)
+                frame = CGRect(
+                    x: worldPoint.x - CanvasGeometry.defaultFrameSize.width * 0.5,
+                    y: worldPoint.y - CanvasGeometry.defaultFrameSize.height * 0.5,
+                    width: CanvasGeometry.defaultFrameSize.width,
+                    height: CanvasGeometry.defaultFrameSize.height
+                )
+            }
+
+            _ = store.createFrame(frame: frame)
             store.tool = .select
         case let .marqueeSelecting(startScreen, currentScreen, appendToSelection):
             let selectionRect = normalizedWorldRect(from: startScreen, to: currentScreen)
@@ -345,6 +386,8 @@ final class CanvasViewportView: NSView {
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "t":
             store.tool = .terminal
+        case "f":
+            store.tool = .frame
         case "x":
             store.tool = .text
         case "v", "s":
@@ -370,8 +413,59 @@ final class CanvasViewportView: NSView {
     }
 
     private func syncElementViews() {
+        syncFrameViews()
         syncNodeViews()
         syncTextViews()
+        syncWorldSubviewOrder()
+    }
+
+    private func syncFrameViews() {
+        guard let store else {
+            return
+        }
+
+        let desiredIDs = Set(store.frameItems.map(\.id))
+
+        for (id, view) in frameViews where !desiredIDs.contains(id) {
+            view.removeFromSuperview()
+            frameViews[id] = nil
+        }
+
+        for (index, frameItem) in store.frameItems.enumerated() {
+            let view: CanvasFrameItemView
+
+            if let existing = frameViews[frameItem.id] {
+                view = existing
+            } else {
+                let created = CanvasFrameItemView(title: frameItem.title)
+                created.onActivate = { [weak self] in
+                    self?.store?.activateElement(frameItem.id)
+                    self?.window?.makeFirstResponder(self)
+                }
+                created.onMove = { [weak self] delta in
+                    self?.store?.moveSelection(anchorID: frameItem.id, byScreenDelta: delta) ?? .none
+                }
+                created.onResize = { [weak self] handle, delta in
+                    self?.store?.resizeFrame(id: frameItem.id, handle: handle, byScreenDelta: delta) ?? .none
+                }
+                created.onTitleCommit = { [weak self] title in
+                    self?.store?.renameFrame(id: frameItem.id, title: title)
+                }
+                worldView.addSubview(created)
+                frameViews[frameItem.id] = created
+                view = created
+            }
+
+            view.title = frameItem.title
+            view.isSelected = store.selectedElementIDs.contains(frameItem.id)
+            view.isInteractionEnabled = store.tool == .select
+            view.layer?.zPosition = LayerDepth.frameBase + CGFloat(index) + (view.isSelected ? LayerDepth.selectedBoost : 0)
+
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            view.frame = frameItem.frame
+            CATransaction.commit()
+        }
     }
 
     private func syncNodeViews() {
@@ -426,7 +520,7 @@ final class CanvasViewportView: NSView {
 
             view.title = node.title
             view.isSelected = store.selectedElementIDs.contains(node.id)
-            view.layer?.zPosition = CGFloat(index) + (view.isSelected ? 1_000 : 0)
+            view.layer?.zPosition = LayerDepth.nodeBase + CGFloat(index) + (view.isSelected ? LayerDepth.selectedBoost : 0)
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -478,7 +572,7 @@ final class CanvasViewportView: NSView {
             view.text = item.text
             view.wrapWidth = item.wrapWidth
             view.isSelected = store.selectedElementIDs.contains(item.id)
-            view.layer?.zPosition = 10_000 + CGFloat(index) + (view.isSelected ? 1_000 : 0)
+            view.layer?.zPosition = LayerDepth.textBase + CGFloat(index) + (view.isSelected ? LayerDepth.selectedBoost : 0)
 
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -495,6 +589,48 @@ final class CanvasViewportView: NSView {
                     view.beginEditing()
                 }
             }
+        }
+    }
+
+    private func syncWorldSubviewOrder() {
+        guard let store else {
+            return
+        }
+
+        let desiredOrder =
+            store.frameItems.compactMap { frameViews[$0.id] } +
+            store.nodes.compactMap { nodeViews[$0.id] } +
+            store.textItems.compactMap { textViews[$0.id] }
+
+        let isAlreadyOrdered =
+            worldView.subviews.count == desiredOrder.count &&
+            zip(worldView.subviews, desiredOrder).allSatisfy { $0 === $1 }
+
+        guard !isAlreadyOrdered else {
+            return
+        }
+
+        var orderByViewID: [ObjectIdentifier: Int] = [:]
+        for (index, view) in desiredOrder.enumerated() {
+            orderByViewID[ObjectIdentifier(view)] = index
+        }
+
+        withUnsafeMutablePointer(to: &orderByViewID) { pointer in
+            worldView.sortSubviews({ lhs, rhs, context in
+                guard let context else {
+                    return .orderedSame
+                }
+
+                let orderMap = context.assumingMemoryBound(to: [ObjectIdentifier: Int].self).pointee
+                let leftIndex = orderMap[ObjectIdentifier(lhs)] ?? 0
+                let rightIndex = orderMap[ObjectIdentifier(rhs)] ?? 0
+
+                if leftIndex == rightIndex {
+                    return .orderedSame
+                }
+
+                return leftIndex < rightIndex ? .orderedAscending : .orderedDescending
+            }, context: UnsafeMutableRawPointer(pointer))
         }
     }
 
@@ -586,6 +722,342 @@ final class CanvasViewportView: NSView {
             width: abs(endWorld.x - startWorld.x),
             height: abs(endWorld.y - startWorld.y)
         )
+    }
+}
+
+final class CanvasFrameItemView: NSView {
+    var onActivate: (() -> Void)?
+    var onMove: ((CGPoint) -> CanvasSnapState)?
+    var onResize: ((ResizeHandle, CGPoint) -> CanvasSnapState)?
+    var onTitleCommit: ((String) -> Void)?
+
+    var title = "" {
+        didSet {
+            titleLabel.stringValue = title
+            titleEditor.stringValue = title
+            needsLayout = true
+        }
+    }
+
+    var isSelected = false {
+        didSet {
+            updateAppearance()
+        }
+    }
+
+    var isInteractionEnabled = true {
+        didSet {
+            guard isInteractionEnabled != oldValue else {
+                return
+            }
+
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+
+    private enum Interaction {
+        case drag
+    }
+
+    private let frameCornerRadius: CGFloat = 16
+    private let selectionOutlineInset: CGFloat = 4
+    private let badgeInset: CGFloat = 14
+    private let badgeHeight: CGFloat = 24
+    private let badgeHorizontalPadding: CGFloat = 10
+    private let titleButtonGap: CGFloat = 7
+    private let titleButtonSize: CGFloat = 12
+    private let edgeHandleThickness: CGFloat = 6
+    private let cornerHandleSize: CGFloat = 14
+
+    private let borderView = TerminalOutlineView()
+    private let selectionOutlineView = DashedSelectionOutlineView()
+    private let titleBadgeView = TerminalOutlineView()
+    private let titleLabel = PassiveLabelTextField(labelWithString: "")
+    private let titleEditor = InlineTitleEditorView()
+    private let editTitleButton = IconClickView()
+    private let snapFeedbackTracker = SnapFeedbackTracker()
+    private var interaction: Interaction?
+    private var editActionRect: CGRect = .zero
+
+    private lazy var handles: [ResizeHandle: ResizeHandleView] = ResizeHandle.allCases.reduce(into: [:]) { result, handle in
+        let view = ResizeHandleView(handle: handle)
+        view.onActivate = { [weak self] in
+            self?.onActivate?()
+        }
+        view.onDrag = { [weak self] dragHandle, delta in
+            self?.onResize?(dragHandle, delta) ?? .none
+        }
+        result[handle] = view
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    init(title: String) {
+        super.init(frame: .zero)
+        self.title = title
+
+        wantsLayer = true
+        layer?.masksToBounds = false
+
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleLabel.textColor = NSColor(calibratedWhite: 0.82, alpha: 1)
+        titleLabel.alignment = .left
+        titleLabel.cell?.lineBreakMode = .byClipping
+        titleLabel.cell?.usesSingleLineMode = true
+        titleLabel.isSelectable = false
+        titleLabel.drawsBackground = false
+        titleLabel.isBordered = false
+
+        titleEditor.stringValue = title
+        titleEditor.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        titleEditor.alignment = .left
+        titleEditor.textColor = NSColor(calibratedWhite: 0.82, alpha: 1)
+        titleEditor.maximumCharacterCount = 40
+        titleEditor.isHidden = true
+        titleEditor.onChange = { [weak self] _ in
+            self?.needsLayout = true
+        }
+        titleEditor.onCommit = { [weak self] title in
+            self?.finishTitleEditing(with: title)
+        }
+
+        editTitleButton.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "Rename frame")
+        editTitleButton.toolTip = "Rename frame"
+        editTitleButton.symbolPointSize = 9
+        editTitleButton.symbolWeight = .medium
+
+        addSubview(borderView)
+        addSubview(selectionOutlineView)
+        addSubview(titleBadgeView)
+        addSubview(titleLabel)
+        addSubview(titleEditor)
+        addSubview(editTitleButton)
+
+        for handleView in handles.values {
+            addSubview(handleView)
+        }
+
+        updateAppearance()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+
+        borderView.frame = bounds
+        selectionOutlineView.frame = bounds.insetBy(dx: -selectionOutlineInset, dy: -selectionOutlineInset)
+        selectionOutlineView.cornerRadius = frameCornerRadius + selectionOutlineInset
+
+        let titleNaturalWidth = measuredTitleWidth()
+        let badgeWidth = min(
+            max(110, titleNaturalWidth + badgeHorizontalPadding * 2 + titleButtonSize + titleButtonGap),
+            max(bounds.width - badgeInset * 2, 110)
+        )
+        let badgeFrame = CGRect(
+            x: badgeInset,
+            y: max(bounds.maxY - badgeInset - badgeHeight, bounds.minY + 10),
+            width: badgeWidth,
+            height: badgeHeight
+        )
+        titleBadgeView.frame = badgeFrame
+
+        let labelHeight = ceil(max(titleLabel.intrinsicContentSize.height, titleEditor.intrinsicContentSize.height))
+        let labelMaxWidth = max(badgeFrame.width - badgeHorizontalPadding * 2 - titleButtonSize - titleButtonGap, 40)
+        let labelWidth = min(max(titleNaturalWidth, 40), labelMaxWidth)
+        let titleFrame = CGRect(
+            x: badgeFrame.minX + badgeHorizontalPadding,
+            y: floor(badgeFrame.midY - labelHeight * 0.5),
+            width: labelWidth,
+            height: labelHeight
+        )
+        titleLabel.frame = titleFrame
+        titleEditor.frame = titleFrame
+        editTitleButton.frame = CGRect(
+            x: titleFrame.maxX + titleButtonGap,
+            y: floor(badgeFrame.midY - titleButtonSize * 0.5),
+            width: titleButtonSize,
+            height: titleButtonSize
+        )
+        editActionRect = editTitleButton.frame.insetBy(dx: -5, dy: -5)
+
+        layoutResizeHandles()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        guard isInteractionEnabled else {
+            return
+        }
+
+        let editRect = editTitleButton.isHidden ? .zero : editActionRect.intersection(bounds)
+        let editingRect = titleEditor.isHidden ? .zero : titleEditor.frame.insetBy(dx: -2, dy: -2).intersection(bounds)
+        let exclusions = [editRect, editingRect]
+            .filter { !$0.isEmpty }
+            .sorted { $0.minX < $1.minX }
+
+        guard !exclusions.isEmpty else {
+            addCursorRect(bounds, cursor: .openHand)
+            return
+        }
+
+        var currentX: CGFloat = 0
+        for exclusion in exclusions {
+            let leftWidth = max(exclusion.minX - currentX, 0)
+            if leftWidth > 0 {
+                addCursorRect(
+                    CGRect(x: currentX, y: 0, width: leftWidth, height: bounds.height),
+                    cursor: .openHand
+                )
+            }
+            currentX = max(currentX, exclusion.maxX)
+        }
+
+        if currentX < bounds.width {
+            addCursorRect(
+                CGRect(x: currentX, y: 0, width: bounds.width - currentX, height: bounds.height),
+                cursor: .openHand
+            )
+        }
+
+        if !editRect.isEmpty {
+            addCursorRect(editRect, cursor: .pointingHand)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard isInteractionEnabled else {
+            return nil
+        }
+
+        return super.hitTest(point)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+
+        if !editTitleButton.isHidden, editActionRect.contains(point) {
+            beginTitleEditing()
+            return
+        }
+
+        interaction = .drag
+        snapFeedbackTracker.reset()
+        onActivate?()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard case .drag = interaction else {
+            return
+        }
+
+        let snapState = onMove?(CanvasInputMapping.mouseDragDelta(deltaX: event.deltaX, deltaY: event.deltaY))
+        snapFeedbackTracker.update(with: snapState)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        interaction = nil
+        snapFeedbackTracker.reset()
+    }
+
+    private func updateAppearance() {
+        let borderColor = isSelected
+            ? NSColor(calibratedRed: 0.96, green: 0.74, blue: 0.33, alpha: 0.96)
+            : NSColor(calibratedWhite: 0.36, alpha: 0.92)
+        let fillColor = isSelected
+            ? NSColor(calibratedRed: 0.99, green: 0.65, blue: 0.16, alpha: 0.08)
+            : NSColor(calibratedWhite: 1, alpha: 0.025)
+        let badgeFillColor = NSColor(calibratedRed: 0.13, green: 0.14, blue: 0.17, alpha: 0.96)
+        let badgeBorderColor = isSelected
+            ? NSColor(calibratedRed: 0.96, green: 0.74, blue: 0.33, alpha: 0.55)
+            : NSColor(calibratedWhite: 0.30, alpha: 0.92)
+        let titleColor = isSelected
+            ? NSColor(calibratedWhite: 0.92, alpha: 1)
+            : NSColor(calibratedWhite: 0.78, alpha: 1)
+        let editButtonColor = isSelected
+            ? NSColor(calibratedRed: 0.97, green: 0.80, blue: 0.43, alpha: 1)
+            : NSColor(calibratedWhite: 0.62, alpha: 1)
+
+        selectionOutlineView.isHidden = !isSelected
+        selectionOutlineView.strokeColor = NSColor(calibratedWhite: 0.84, alpha: 0.92)
+        titleLabel.textColor = titleColor
+        titleEditor.textColor = titleColor
+        editTitleButton.contentTintColor = editButtonColor
+        editTitleButton.isHidden = !isSelected && titleEditor.isHidden
+
+        borderView.apply(
+            cornerRadius: frameCornerRadius,
+            borderWidth: 1.25,
+            borderColor: borderColor,
+            backgroundColor: fillColor,
+            shadowOpacity: isSelected ? 0.12 : 0.08,
+            shadowRadius: isSelected ? 12 : 7
+        )
+        titleBadgeView.apply(
+            cornerRadius: badgeHeight * 0.5,
+            borderWidth: 1,
+            borderColor: badgeBorderColor,
+            backgroundColor: badgeFillColor,
+            shadowOpacity: 0,
+            shadowRadius: 0
+        )
+
+        for handleView in handles.values {
+            handleView.isHidden = !isSelected
+        }
+
+        window?.invalidateCursorRects(for: self)
+    }
+
+    private func beginTitleEditing() {
+        onActivate?()
+        titleEditor.stringValue = title
+        titleLabel.isHidden = true
+        titleEditor.isHidden = false
+        editTitleButton.isHidden = false
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            self?.titleEditor.beginEditing()
+        }
+    }
+
+    private func finishTitleEditing(with proposedTitle: String) {
+        let normalized = String(proposedTitle.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        titleLabel.isHidden = false
+        titleEditor.isHidden = true
+
+        if !normalized.isEmpty {
+            title = normalized
+            onTitleCommit?(normalized)
+        } else {
+            titleEditor.stringValue = title
+        }
+
+        needsLayout = true
+        updateAppearance()
+    }
+
+    private func measuredTitleWidth() -> CGFloat {
+        let visibleTitle = titleEditor.isHidden ? title : titleEditor.stringValue
+        let text = visibleTitle.isEmpty ? " " : visibleTitle
+        let font = titleLabel.font ?? .systemFont(ofSize: 12.5, weight: .semibold)
+        let measuredWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
+        return max(42, measuredWidth)
+    }
+
+    private func layoutResizeHandles() {
+        handles[.topLeft]?.frame = CGRect(x: 0, y: bounds.height - cornerHandleSize, width: cornerHandleSize, height: cornerHandleSize)
+        handles[.top]?.frame = CGRect(x: cornerHandleSize, y: bounds.height - edgeHandleThickness, width: bounds.width - cornerHandleSize * 2, height: edgeHandleThickness)
+        handles[.topRight]?.frame = CGRect(x: bounds.width - cornerHandleSize, y: bounds.height - cornerHandleSize, width: cornerHandleSize, height: cornerHandleSize)
+        handles[.right]?.frame = CGRect(x: bounds.width - edgeHandleThickness, y: cornerHandleSize, width: edgeHandleThickness, height: bounds.height - cornerHandleSize * 2)
+        handles[.bottomRight]?.frame = CGRect(x: bounds.width - cornerHandleSize, y: 0, width: cornerHandleSize, height: cornerHandleSize)
+        handles[.bottom]?.frame = CGRect(x: cornerHandleSize, y: 0, width: bounds.width - cornerHandleSize * 2, height: edgeHandleThickness)
+        handles[.bottomLeft]?.frame = CGRect(x: 0, y: 0, width: cornerHandleSize, height: cornerHandleSize)
+        handles[.left]?.frame = CGRect(x: 0, y: cornerHandleSize, width: edgeHandleThickness, height: bounds.height - cornerHandleSize * 2)
     }
 }
 

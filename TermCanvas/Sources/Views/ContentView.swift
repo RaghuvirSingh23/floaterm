@@ -48,6 +48,11 @@ struct ContentView: View {
             zoomSection
 
             if store.selectionCount > 0 {
+                if store.canWrapSelectionInFrame {
+                    separator
+                    frameSection
+                }
+
                 separator
                 deleteSection
                 selectionBadge
@@ -165,6 +170,24 @@ struct ContentView: View {
         .help("Delete the current selection")
     }
 
+    private var frameSection: some View {
+        Button {
+            _ = store.wrapSelectionInFrame()
+        } label: {
+            Label("Frame", systemImage: "square.on.square.dashed")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(Color(red: 1.0, green: 0.83, blue: 0.52))
+                .background(
+                    Capsule()
+                        .fill(Color.orange.opacity(0.11))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Wrap the current selection in a frame")
+    }
+
     private var selectionBadge: some View {
         Text("\(store.selectionCount) selected")
             .font(.system(size: 12, weight: .semibold))
@@ -202,6 +225,8 @@ struct ContentView: View {
             return "Select items. Drag on empty canvas to marquee-select."
         case .terminal:
             return "Drag to create a terminal."
+        case .frame:
+            return "Drag to create a frame."
         case .text:
             return "Click anywhere to place text."
         }

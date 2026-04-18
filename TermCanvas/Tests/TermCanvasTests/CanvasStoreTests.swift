@@ -130,11 +130,82 @@ final class CanvasStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testWrapSelectionInFrameCreatesContainerAroundContent() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 100, y: 120, width: 320, height: 240))
+        let textID = store.createText(at: CGPoint(x: 220, y: 180), content: "deploy")
+        store.setSelection([nodeID, textID])
+
+        let frameID = try XCTUnwrap(store.wrapSelectionInFrame())
+
+        let frameItem = try XCTUnwrap(store.frameItems.first(where: { $0.id == frameID }))
+        XCTAssertEqual(Set(frameItem.childIDs), [nodeID, textID])
+        XCTAssertEqual(store.selectedElementIDs, [frameID])
+
+        let nodeFrame = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID })?.frame)
+        XCTAssertTrue(frameItem.frame.contains(CGPoint(x: nodeFrame.midX, y: nodeFrame.midY)))
+    }
+
+    @MainActor
+    func testMovingFrameMovesItsChildren() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 100, y: 100, width: 320, height: 240))
+        let frameID = store.createFrame(frame: CGRect(x: 80, y: 80, width: 400, height: 320), childIDs: [nodeID])
+        let originalNodeFrame = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID })?.frame)
+
+        store.moveSelection(anchorID: frameID, byScreenDelta: CGPoint(x: 96, y: 48))
+
+        let movedFrame = try XCTUnwrap(store.frameItems.first(where: { $0.id == frameID }))
+        let movedNode = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID }))
+        XCTAssertEqual(movedFrame.frame.origin.x, 176, accuracy: 0.0001)
+        XCTAssertEqual(movedFrame.frame.origin.y, 128, accuracy: 0.0001)
+        XCTAssertEqual(movedNode.frame.origin.x, originalNodeFrame.origin.x + 96, accuracy: 0.0001)
+        XCTAssertEqual(movedNode.frame.origin.y, originalNodeFrame.origin.y + 48, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testMovingSelectedChildDoesNotMoveSelectedParentFrame() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 100, y: 100, width: 320, height: 240))
+        let frameID = store.createFrame(frame: CGRect(x: 80, y: 80, width: 400, height: 320), childIDs: [nodeID])
+        let originalFrame = try XCTUnwrap(store.frameItems.first(where: { $0.id == frameID })?.frame)
+        let originalNodeFrame = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID })?.frame)
+
+        store.setSelection([frameID, nodeID])
+        store.moveSelection(anchorID: nodeID, byScreenDelta: CGPoint(x: 72, y: 36))
+
+        let movedFrame = try XCTUnwrap(store.frameItems.first(where: { $0.id == frameID })?.frame)
+        let movedNode = try XCTUnwrap(store.nodes.first(where: { $0.id == nodeID })?.frame)
+        XCTAssertEqual(movedFrame, originalFrame)
+        XCTAssertEqual(movedNode.origin.x, originalNodeFrame.origin.x + 72, accuracy: 0.0001)
+        XCTAssertEqual(movedNode.origin.y, originalNodeFrame.origin.y + 36, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testDeletingFrameKeepsChildrenOnCanvas() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 60, y: 60, width: 320, height: 240))
+        let frameID = store.createFrame(frame: CGRect(x: 40, y: 40, width: 400, height: 320), childIDs: [nodeID])
+        store.setSelection([frameID])
+
+        store.deleteSelection()
+
+        XCTAssertTrue(store.nodes.contains(where: { $0.id == nodeID }))
+        XCTAssertFalse(store.frameItems.contains(where: { $0.id == frameID }))
+    }
+
+    @MainActor
     func testStoreRestoresWorkspaceSnapshotAndCounter() throws {
         let restoredNode = TerminalNode(
             id: UUID(),
             title: "TERM 07",
             frame: CGRect(x: 80, y: 120, width: 520, height: 320)
+        )
+        let restoredFrame = CanvasFrameItem(
+            id: UUID(),
+            title: "FRAME 02",
+            frame: CGRect(x: 40, y: 80, width: 620, height: 420),
+            childIDs: [restoredNode.id]
         )
         let restoredText = CanvasTextItem(
             id: UUID(),
@@ -144,18 +215,25 @@ final class CanvasStoreTests: XCTestCase {
         )
         let snapshot = WorkspaceSnapshot(
             nodes: [restoredNode],
+            frameItems: [restoredFrame],
             textItems: [restoredText],
             camera: CanvasCamera(zoom: 1.4, pan: CGPoint(x: 280, y: 190)),
-            terminalCounter: 8
+            terminalCounter: 8,
+            frameCounter: 3
         )
         let store = CanvasStore(snapshot: snapshot)
 
         XCTAssertEqual(store.nodes, [restoredNode])
+        XCTAssertEqual(store.frameItems, [restoredFrame])
         XCTAssertEqual(store.textItems, [restoredText])
         XCTAssertEqual(store.camera, snapshot.camera)
 
         let newID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         let newNode = try XCTUnwrap(store.nodes.first(where: { $0.id == newID }))
         XCTAssertEqual(newNode.title, "TERM 08")
+
+        let newFrameID = store.createFrame(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let newFrame = try XCTUnwrap(store.frameItems.first(where: { $0.id == newFrameID }))
+        XCTAssertEqual(newFrame.title, "FRAME 03")
     }
 }

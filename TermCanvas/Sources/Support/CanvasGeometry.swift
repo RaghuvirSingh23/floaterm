@@ -4,6 +4,9 @@ import Foundation
 enum CanvasGeometry {
     static let minimumNodeSize = CGSize(width: 280, height: 190)
     static let defaultNodeSize = CGSize(width: 520, height: 320)
+    static let minimumFrameSize = CGSize(width: 260, height: 180)
+    static let defaultFrameSize = CGSize(width: 540, height: 360)
+    static let frameWrapInsets = NSEdgeInsets(top: 40, left: 24, bottom: 24, right: 24)
     static let minimumTextHeight: CGFloat = 32
     static let textPadding = CGSize(width: 18, height: 10)
     static let minimumZoom: CGFloat = 0.35
@@ -58,6 +61,10 @@ enum CanvasGeometry {
 
     static func resized(frame: CGRect, handle: ResizeHandle, deltaInWorld: CGPoint) -> CGRect {
         resized(frame: frame, handle: handle, deltaInWorld: deltaInWorld, minimumSize: minimumNodeSize)
+    }
+
+    static func resizedFrameItem(frame: CGRect, handle: ResizeHandle, deltaInWorld: CGPoint) -> CGRect {
+        resized(frame: frame, handle: handle, deltaInWorld: deltaInWorld, minimumSize: minimumFrameSize)
     }
 
     static func zoomed(camera: CanvasCamera, factor: CGFloat, anchorInScreen: CGPoint) -> CanvasCamera {

@@ -5,8 +5,10 @@ import Foundation
 @MainActor
 final class CanvasStore: ObservableObject {
     private let maximumNodeTitleLength = 20
+    private let maximumFrameTitleLength = 40
 
     @Published private(set) var nodes: [TerminalNode] = []
+    @Published private(set) var frameItems: [CanvasFrameItem] = []
     @Published private(set) var textItems: [CanvasTextItem] = []
     @Published private(set) var selectedElementIDs: Set<UUID> = []
     @Published var camera = CanvasCamera()
@@ -15,14 +17,18 @@ final class CanvasStore: ObservableObject {
     @Published var pendingTextEditID: UUID?
 
     private var terminalCounter = 1
+    private var frameCounter = 1
     private var didSeedInitialNode = false
 
     init(snapshot: WorkspaceSnapshot? = nil) {
         if let snapshot {
             nodes = snapshot.nodes
+            frameItems = snapshot.frameItems
             textItems = snapshot.textItems
             camera = snapshot.camera
             terminalCounter = max(snapshot.terminalCounter, snapshot.nodes.count + 1)
+            frameCounter = max(snapshot.frameCounter, snapshot.frameItems.count + 1)
+            sanitizeFrameMemberships()
             didSeedInitialNode = true
         }
     }
@@ -31,12 +37,18 @@ final class CanvasStore: ObservableObject {
         selectedElementIDs.count
     }
 
+    var canWrapSelectionInFrame: Bool {
+        !selectedFrameableElementIDs.isEmpty
+    }
+
     var workspaceSnapshot: WorkspaceSnapshot {
         WorkspaceSnapshot(
             nodes: nodes,
+            frameItems: frameItems,
             textItems: textItems,
             camera: camera,
-            terminalCounter: terminalCounter
+            terminalCounter: terminalCounter,
+            frameCounter: frameCounter
         )
     }
 
@@ -87,11 +99,12 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func createTerminal(frame: CGRect) -> UUID {
+        let standardizedFrame = frame.standardized
         let normalizedFrame = CGRect(
-            x: frame.origin.x,
-            y: frame.origin.y,
-            width: max(frame.width, CanvasGeometry.minimumNodeSize.width),
-            height: max(frame.height, CanvasGeometry.minimumNodeSize.height)
+            x: standardizedFrame.origin.x,
+            y: standardizedFrame.origin.y,
+            width: max(standardizedFrame.width, CanvasGeometry.minimumNodeSize.width),
+            height: max(standardizedFrame.height, CanvasGeometry.minimumNodeSize.height)
         )
 
         let node = TerminalNode(
@@ -102,8 +115,34 @@ final class CanvasStore: ObservableObject {
         terminalCounter += 1
 
         nodes.append(node)
+        updateFrameMemberships(for: [node.id])
         setSelection([node.id])
         return node.id
+    }
+
+    @discardableResult
+    func createFrame(frame: CGRect, childIDs: Set<UUID> = []) -> UUID {
+        let standardizedFrame = frame.standardized
+        let normalizedFrame = CGRect(
+            x: standardizedFrame.origin.x,
+            y: standardizedFrame.origin.y,
+            width: max(standardizedFrame.width, CanvasGeometry.minimumFrameSize.width),
+            height: max(standardizedFrame.height, CanvasGeometry.minimumFrameSize.height)
+        )
+        let memberIDs = orderedFrameableElementIDs(in: childIDs)
+        detachElementsFromFrames(Set(memberIDs))
+
+        let frameItem = CanvasFrameItem(
+            id: UUID(),
+            title: String(format: "FRAME %02d", frameCounter),
+            frame: normalizedFrame,
+            childIDs: memberIDs
+        )
+        frameCounter += 1
+
+        frameItems.append(frameItem)
+        setSelection([frameItem.id])
+        return frameItem.id
     }
 
     @discardableResult
@@ -116,9 +155,30 @@ final class CanvasStore: ObservableObject {
         )
 
         textItems.append(item)
+        updateFrameMemberships(for: [item.id])
         setSelection([item.id])
         pendingTextEditID = item.id
         return item.id
+    }
+
+    @discardableResult
+    func wrapSelectionInFrame() -> UUID? {
+        let childIDs = selectedFrameableElementIDs
+        let childFrames = orderedFrameableElementIDs(in: childIDs).compactMap { frame(for: $0) }
+        guard let boundingRect = childFrames.reduce(nil, { partial, frame in
+            partial.map { $0.union(frame) } ?? frame
+        }) else {
+            return nil
+        }
+
+        let paddedFrame = CGRect(
+            x: boundingRect.minX - CanvasGeometry.frameWrapInsets.left,
+            y: boundingRect.minY - CanvasGeometry.frameWrapInsets.bottom,
+            width: boundingRect.width + CanvasGeometry.frameWrapInsets.left + CanvasGeometry.frameWrapInsets.right,
+            height: boundingRect.height + CanvasGeometry.frameWrapInsets.top + CanvasGeometry.frameWrapInsets.bottom
+        )
+
+        return createFrame(frame: paddedFrame, childIDs: childIDs)
     }
 
     func acknowledgePendingTextEdit(id: UUID) {
@@ -139,13 +199,24 @@ final class CanvasStore: ObservableObject {
         }
 
         let deletedIDs = selectedElementIDs
+        let deletedFrameIDs = Set(frameItems.lazy.filter { deletedIDs.contains($0.id) }.map(\.id))
+        let deletedContentIDs = frameableElementIDs(in: deletedIDs)
+
         nodes.removeAll { deletedIDs.contains($0.id) }
         textItems.removeAll { deletedIDs.contains($0.id) }
+        frameItems.removeAll { deletedFrameIDs.contains($0.id) }
+        detachElementsFromFrames(deletedContentIDs)
         selectedElementIDs.removeAll()
     }
 
     func removeNode(id: UUID) {
         nodes.removeAll { $0.id == id }
+        detachElementsFromFrames([id])
+        selectedElementIDs.remove(id)
+    }
+
+    func removeFrame(id: UUID) {
+        frameItems.removeAll { $0.id == id }
         selectedElementIDs.remove(id)
     }
 
@@ -171,7 +242,8 @@ final class CanvasStore: ObservableObject {
     }
 
     func selectElements(intersecting rect: CGRect, append: Bool = false) {
-        let hitIDs = Set(nodes.lazy.filter { rect.intersects($0.frame) }.map(\.id))
+        let hitIDs = Set(frameItems.lazy.filter { rect.intersects($0.frame) }.map(\.id))
+            .union(nodes.lazy.filter { rect.intersects($0.frame) }.map(\.id))
             .union(textItems.lazy.filter { rect.intersects($0.frame) }.map(\.id))
 
         if append {
@@ -198,6 +270,21 @@ final class CanvasStore: ObservableObject {
         }
     }
 
+    func renameFrame(id: UUID, title: String) {
+        let normalized = String(
+            title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(maximumFrameTitleLength)
+        )
+        guard !normalized.isEmpty else {
+            return
+        }
+
+        mutateFrame(id: id) { frameItem in
+            frameItem.title = normalized
+        }
+    }
+
     func updateTextDraft(id: UUID, content: String) {
         mutateTextItem(id: id) { item in
             item.text = content
@@ -210,6 +297,7 @@ final class CanvasStore: ObservableObject {
 
         guard !normalized.isEmpty else {
             textItems.removeAll { $0.id == id }
+            detachElementsFromFrames([id])
             selectedElementIDs.remove(id)
             pendingTextEditID = nil
             return
@@ -219,6 +307,7 @@ final class CanvasStore: ObservableObject {
             item.text = content
             item.frame.size = CanvasGeometry.sizeForText(content, wrapWidth: item.wrapWidth)
         }
+        updateFrameMemberships(for: [id])
     }
 
     @discardableResult
@@ -261,12 +350,13 @@ final class CanvasStore: ObservableObject {
             }
         }
 
+        updateFrameMemberships(for: [id])
         return feedbackState
     }
 
     @discardableResult
     func moveSelection(anchorID: UUID, byScreenDelta delta: CGPoint) -> CanvasSnapState {
-        let targetIDs = selectedElementIDs.contains(anchorID) ? selectedElementIDs : [anchorID]
+        let targetIDs = moveTargetIDs(forAnchorID: anchorID)
         return moveElements(ids: targetIDs, anchorID: anchorID, byScreenDelta: delta)
     }
 
@@ -309,6 +399,39 @@ final class CanvasStore: ObservableObject {
             }
         }
 
+        updateFrameMemberships(for: [id])
+        return feedbackState
+    }
+
+    @discardableResult
+    func resizeFrame(id: UUID, handle: ResizeHandle, byScreenDelta delta: CGPoint) -> CanvasSnapState {
+        let deltaInWorld = CGPoint(x: delta.x / camera.zoom, y: delta.y / camera.zoom)
+        let step = CanvasGeometry.adaptiveGridStep(for: camera)
+        let threshold = CanvasGeometry.gridSnapThreshold(for: camera)
+        var feedbackState = CanvasSnapState.none
+
+        mutateFrame(id: id) { frameItem in
+            frameItem.frame = CanvasGeometry.resizedFrameItem(frame: frameItem.frame, handle: handle, deltaInWorld: deltaInWorld)
+
+            switch handle {
+            case .topLeft, .bottomLeft, .left:
+                feedbackState.x = CanvasGeometry.snappedValue(frameItem.frame.minX, step: step, threshold: threshold)
+            case .topRight, .bottomRight, .right:
+                feedbackState.x = CanvasGeometry.snappedValue(frameItem.frame.maxX, step: step, threshold: threshold)
+            case .top, .bottom:
+                break
+            }
+
+            switch handle {
+            case .topLeft, .topRight, .top:
+                feedbackState.y = CanvasGeometry.snappedValue(frameItem.frame.maxY, step: step, threshold: threshold)
+            case .bottomLeft, .bottomRight, .bottom:
+                feedbackState.y = CanvasGeometry.snappedValue(frameItem.frame.minY, step: step, threshold: threshold)
+            case .left, .right:
+                break
+            }
+        }
+
         return feedbackState
     }
 
@@ -329,10 +452,49 @@ final class CanvasStore: ObservableObject {
         camera.zoom = 1
     }
 
+    private var selectedFrameableElementIDs: Set<UUID> {
+        frameableElementIDs(in: selectedElementIDs)
+    }
+
+    private func moveTargetIDs(forAnchorID anchorID: UUID) -> Set<UUID> {
+        guard selectedElementIDs.contains(anchorID) else {
+            return [anchorID]
+        }
+
+        if isFrameID(anchorID) {
+            let selectedFrameIDs = Set(frameItems.lazy.filter { self.selectedElementIDs.contains($0.id) }.map(\.id))
+            return selectedFrameIDs.isEmpty ? [anchorID] : selectedFrameIDs
+        }
+
+        if isFrameableElementID(anchorID) {
+            let selectedContentIDs = frameableElementIDs(in: selectedElementIDs)
+            return selectedContentIDs.isEmpty ? [anchorID] : selectedContentIDs
+        }
+
+        return [anchorID]
+    }
+
     private func moveElements(ids: Set<UUID>, anchorID: UUID, byScreenDelta delta: CGPoint) -> CanvasSnapState {
         let deltaInWorld = CGPoint(x: delta.x / camera.zoom, y: delta.y / camera.zoom)
+        let movingFrameIDs = Set(frameItems.lazy.filter { ids.contains($0.id) }.map(\.id))
+        let childIDsOwnedByMovingFrames = Set(movingFrameIDs.flatMap { childIDs(forFrameID: $0) })
+        let independentlyMovedIDs = ids.subtracting(childIDsOwnedByMovingFrames)
 
-        for id in ids {
+        for frameID in movingFrameIDs {
+            mutateFrame(id: frameID) { frameItem in
+                frameItem.frame.origin.x += deltaInWorld.x
+                frameItem.frame.origin.y += deltaInWorld.y
+            }
+
+            moveFrameChildren(frameID: frameID, deltaInWorld: deltaInWorld)
+        }
+
+        let independentlyMovedContentIDs = frameableElementIDs(in: independentlyMovedIDs)
+        for id in independentlyMovedContentIDs {
+            guard !childIDsOwnedByMovingFrames.contains(id) else {
+                continue
+            }
+
             mutateNode(id: id) { node in
                 node.frame.origin.x += deltaInWorld.x
                 node.frame.origin.y += deltaInWorld.y
@@ -343,6 +505,8 @@ final class CanvasStore: ObservableObject {
                 item.frame.origin.y += deltaInWorld.y
             }
         }
+
+        updateFrameMemberships(for: independentlyMovedContentIDs)
 
         guard let anchorFrame = frame(for: anchorID) else {
             return .none
@@ -363,10 +527,111 @@ final class CanvasStore: ObservableObject {
         return feedbackState
     }
 
+    private func moveFrameChildren(frameID: UUID, deltaInWorld: CGPoint) {
+        for id in childIDs(forFrameID: frameID) {
+            mutateNode(id: id) { node in
+                node.frame.origin.x += deltaInWorld.x
+                node.frame.origin.y += deltaInWorld.y
+            }
+
+            mutateTextItem(id: id) { item in
+                item.frame.origin.x += deltaInWorld.x
+                item.frame.origin.y += deltaInWorld.y
+            }
+        }
+    }
+
+    private func updateFrameMemberships(for ids: Set<UUID>) {
+        let candidateIDs = orderedFrameableElementIDs(in: ids)
+        guard !candidateIDs.isEmpty else {
+            return
+        }
+
+        detachElementsFromFrames(Set(candidateIDs))
+
+        for id in candidateIDs {
+            guard
+                let elementFrame = frame(for: id),
+                let frameIndex = bestContainingFrameIndex(for: elementFrame)
+            else {
+                continue
+            }
+
+            if !frameItems[frameIndex].childIDs.contains(id) {
+                frameItems[frameIndex].childIDs.append(id)
+            }
+        }
+    }
+
+    private func bestContainingFrameIndex(for childFrame: CGRect) -> Int? {
+        let center = CGPoint(x: childFrame.midX, y: childFrame.midY)
+
+        return frameItems.enumerated()
+            .filter { $0.element.frame.contains(center) }
+            .min { lhs, rhs in
+                lhs.element.frame.width * lhs.element.frame.height < rhs.element.frame.width * rhs.element.frame.height
+            }?
+            .offset
+    }
+
+    private func frameableElementIDs(in ids: Set<UUID>) -> Set<UUID> {
+        let nodeIDs = Set(nodes.lazy.filter { ids.contains($0.id) }.map(\.id))
+        let textIDs = Set(textItems.lazy.filter { ids.contains($0.id) }.map(\.id))
+        return nodeIDs.union(textIDs)
+    }
+
+    private func isFrameID(_ id: UUID) -> Bool {
+        frameItems.contains { $0.id == id }
+    }
+
+    private func isFrameableElementID(_ id: UUID) -> Bool {
+        nodes.contains { $0.id == id } || textItems.contains { $0.id == id }
+    }
+
+    private func orderedFrameableElementIDs(in ids: Set<UUID>) -> [UUID] {
+        let orderedNodes = nodes.filter { ids.contains($0.id) }.map(\.id)
+        let orderedText = textItems.filter { ids.contains($0.id) }.map(\.id)
+        return orderedNodes + orderedText
+    }
+
+    private func childIDs(forFrameID id: UUID) -> [UUID] {
+        frameItems.first(where: { $0.id == id })?.childIDs ?? []
+    }
+
+    private func detachElementsFromFrames(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else {
+            return
+        }
+
+        for index in frameItems.indices {
+            frameItems[index].childIDs.removeAll { ids.contains($0) }
+        }
+    }
+
+    private func sanitizeFrameMemberships() {
+        let liveElementIDs = Set(nodes.map(\.id)).union(textItems.map(\.id))
+        var seenIDs: Set<UUID> = []
+
+        for index in frameItems.indices {
+            frameItems[index].childIDs = frameItems[index].childIDs.filter { id in
+                guard liveElementIDs.contains(id), !seenIDs.contains(id) else {
+                    return false
+                }
+
+                seenIDs.insert(id)
+                return true
+            }
+        }
+    }
+
     private func bringSelectionToFront() {
         guard !selectedElementIDs.isEmpty else {
             return
         }
+
+        let selectedFrames = frameItems.filter { selectedElementIDs.contains($0.id) }
+        frameItems.removeAll { selectedElementIDs.contains($0.id) }
+        frameItems.append(contentsOf: selectedFrames)
 
         let selectedNodes = nodes.filter { selectedElementIDs.contains($0.id) }
         nodes.removeAll { selectedElementIDs.contains($0.id) }
@@ -385,6 +650,14 @@ final class CanvasStore: ObservableObject {
         mutate(&nodes[index])
     }
 
+    private func mutateFrame(id: UUID, _ mutate: (inout CanvasFrameItem) -> Void) {
+        guard let index = frameItems.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        mutate(&frameItems[index])
+    }
+
     private func mutateTextItem(id: UUID, _ mutate: (inout CanvasTextItem) -> Void) {
         guard let index = textItems.firstIndex(where: { $0.id == id }) else {
             return
@@ -394,6 +667,10 @@ final class CanvasStore: ObservableObject {
     }
 
     private func frame(for id: UUID) -> CGRect? {
+        if let frameItem = frameItems.first(where: { $0.id == id }) {
+            return frameItem.frame
+        }
+
         if let node = nodes.first(where: { $0.id == id }) {
             return node.frame
         }
