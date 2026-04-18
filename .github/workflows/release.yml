@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Tag to release, for example v0.1.0
+        required: false
+        type: string
+      draft:
+        description: Publish as draft when run manually
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  macos-release:
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag=""
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ inputs.release_tag }}"
+          fi
+
+          if [[ -z "$tag" ]]; then
+            echo "release_tag is required for manual releases" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "draft=${{ inputs.draft }}" >>"$GITHUB_OUTPUT"
+
+      - name: Build macOS release artifacts
+        id: build
+        env:
+          RELEASE_VERSION: ${{ steps.meta.outputs.tag }}
+          RELEASE_BUILD_NUMBER: ${{ github.run_number }}
+        run: ./script/build_release.sh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.artifact_stem }}
+          path: |
+            ${{ steps.build.outputs.zip_path }}
+            ${{ steps.build.outputs.dmg_path }}
+            ${{ steps.build.outputs.checksum_path }}
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_DRAFT: ${{ steps.meta.outputs.draft }}
+          ZIP_PATH: ${{ steps.build.outputs.zip_path }}
+          DMG_PATH: ${{ steps.build.outputs.dmg_path }}
+          CHECKSUM_PATH: ${{ steps.build.outputs.checksum_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$ZIP_PATH" "$DMG_PATH" "$CHECKSUM_PATH" --clobber
+            exit 0
+          fi
+
+          args=(
+            "$RELEASE_TAG"
+            "$ZIP_PATH"
+            "$DMG_PATH"
+            "$CHECKSUM_PATH"
+            --title "Floaterm $RELEASE_TAG"
+            --generate-notes
+          )
+
+          if [[ "${GITHUB_REF_TYPE:-}" != "tag" ]]; then
+            args+=(--target "$GITHUB_SHA")
+          fi
+
+          if [[ "$RELEASE_DRAFT" == "true" ]]; then
+            args+=(--draft)
+          fi
+
+          gh release create "${args[@]}"
