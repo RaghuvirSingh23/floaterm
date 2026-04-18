@@ -32,8 +32,8 @@ CHECKSUM_PATH="$DIST_DIR/$ARTIFACT_STEM-sha256.txt"
 
 generate_app_icon() {
   if [[ ! -f "$APP_ICON_SOURCE" ]]; then
-    echo "warning: missing app icon source at $APP_ICON_SOURCE" >&2
-    return
+    echo "error: missing app icon source at $APP_ICON_SOURCE" >&2
+    exit 1
   fi
 
   local icon_work_dir

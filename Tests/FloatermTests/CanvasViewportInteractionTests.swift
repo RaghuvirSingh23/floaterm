@@ -81,13 +81,15 @@ final class CanvasViewportInteractionTests: XCTestCase {
         rootView.addSubview(viewport)
         viewport.apply(store: store, appModel: appModel)
         window.makeKeyAndOrderFront(nil)
-        window.displayIfNeeded()
+        pumpLayout(in: rootView, runLoopInterval: 0.05)
+        return (window, rootView, viewport)
+    }
+
+    private func pumpLayout(in rootView: NSView, runLoopInterval: TimeInterval) {
+        rootView.window?.displayIfNeeded()
         rootView.layoutSubtreeIfNeeded()
         rootView.displayIfNeeded()
-        viewport.layoutSubtreeIfNeeded()
-        viewport.displayIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        return (window, rootView, viewport)
+        RunLoop.main.run(until: Date().addingTimeInterval(runLoopInterval))
     }
 
     private func waitForHitView(in rootView: NSView, timeout: TimeInterval = 1.0, resolver: () -> NSView?) -> NSView? {
@@ -95,10 +97,7 @@ final class CanvasViewportInteractionTests: XCTestCase {
         var hitView = resolver()
 
         while hitView == nil, Date() < deadline {
-            rootView.window?.displayIfNeeded()
-            rootView.layoutSubtreeIfNeeded()
-            rootView.displayIfNeeded()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            pumpLayout(in: rootView, runLoopInterval: 0.01)
             hitView = resolver()
         }
 
