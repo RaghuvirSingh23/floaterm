@@ -77,6 +77,55 @@ final class CanvasStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testBroadcastTargetsOnlyOtherSelectedTerminals() {
+        let store = CanvasStore()
+        let firstID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let secondID = store.createTerminal(frame: CGRect(x: 360, y: 0, width: 320, height: 240))
+        let thirdID = store.createTerminal(frame: CGRect(x: 720, y: 0, width: 320, height: 240))
+        let textID = store.createText(at: CGPoint(x: 200, y: 320), content: "note")
+
+        store.setSelection([firstID, secondID, textID])
+        store.setTerminalBroadcastEnabled(true)
+
+        XCTAssertTrue(store.isTerminalBroadcastEnabled)
+        XCTAssertTrue(store.canBroadcastSelectedTerminals)
+        XCTAssertEqual(store.selectedTerminalCount, 2)
+        XCTAssertEqual(Set(store.terminalBroadcastTargetIDs(forOriginID: firstID)), [secondID])
+        XCTAssertEqual(store.terminalBroadcastTargetIDs(forOriginID: thirdID), [])
+    }
+
+    @MainActor
+    func testBroadcastDisablesWhenSelectionDropsBelowTwoTerminals() {
+        let store = CanvasStore()
+        let firstID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let secondID = store.createTerminal(frame: CGRect(x: 360, y: 0, width: 320, height: 240))
+
+        store.setSelection([firstID, secondID])
+        store.setTerminalBroadcastEnabled(true)
+        XCTAssertTrue(store.isTerminalBroadcastEnabled)
+
+        store.setSelection([firstID])
+        XCTAssertFalse(store.isTerminalBroadcastEnabled)
+        XCTAssertFalse(store.canBroadcastSelectedTerminals)
+        XCTAssertEqual(store.terminalBroadcastTargetIDs(forOriginID: firstID), [])
+    }
+
+    @MainActor
+    func testRequestFocusOnSelectedTerminalTargetsSelectedTerminal() {
+        let store = CanvasStore()
+        let firstID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let secondID = store.createTerminal(frame: CGRect(x: 360, y: 0, width: 320, height: 240))
+
+        store.setSelection([firstID, secondID])
+        store.requestFocusOnSelectedTerminal()
+
+        XCTAssertEqual(store.pendingTerminalFocusID, secondID)
+
+        store.acknowledgePendingTerminalFocus(id: secondID)
+        XCTAssertNil(store.pendingTerminalFocusID)
+    }
+
+    @MainActor
     func testDraftTextGrowsWithoutFixedWidthAndDeletesWhenCommittedEmpty() throws {
         let store = CanvasStore()
         let textID = store.createText(at: CGPoint(x: 0, y: 0), content: "Hi")

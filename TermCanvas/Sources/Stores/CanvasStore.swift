@@ -13,8 +13,10 @@ final class CanvasStore: ObservableObject {
     @Published private(set) var selectedElementIDs: Set<UUID> = []
     @Published var camera = CanvasCamera()
     @Published var tool: CanvasTool = .select
+    @Published var isTerminalBroadcastEnabled = false
     @Published private(set) var viewportSize: CGSize = .zero
     @Published var pendingTextEditID: UUID?
+    @Published var pendingTerminalFocusID: UUID?
 
     private var terminalCounter = 1
     private var frameCounter = 1
@@ -37,8 +39,20 @@ final class CanvasStore: ObservableObject {
         selectedElementIDs.count
     }
 
+    var selectedTerminalIDs: Set<UUID> {
+        Set(nodes.lazy.filter { self.selectedElementIDs.contains($0.id) }.map(\.id))
+    }
+
+    var selectedTerminalCount: Int {
+        selectedTerminalIDs.count
+    }
+
     var canWrapSelectionInFrame: Bool {
         !selectedFrameableElementIDs.isEmpty
+    }
+
+    var canBroadcastSelectedTerminals: Bool {
+        selectedTerminalCount > 1
     }
 
     var workspaceSnapshot: WorkspaceSnapshot {
@@ -193,6 +207,36 @@ final class CanvasStore: ObservableObject {
         deleteSelection()
     }
 
+    func setTerminalBroadcastEnabled(_ enabled: Bool) {
+        isTerminalBroadcastEnabled = enabled && canBroadcastSelectedTerminals
+    }
+
+    func requestFocusOnSelectedTerminal() {
+        pendingTerminalFocusID = nodes.last(where: { selectedElementIDs.contains($0.id) })?.id
+    }
+
+    func acknowledgePendingTerminalFocus(id: UUID) {
+        guard pendingTerminalFocusID == id else {
+            return
+        }
+
+        pendingTerminalFocusID = nil
+    }
+
+    func terminalBroadcastTargetIDs(forOriginID originID: UUID) -> [UUID] {
+        guard
+            isTerminalBroadcastEnabled,
+            canBroadcastSelectedTerminals,
+            selectedTerminalIDs.contains(originID)
+        else {
+            return []
+        }
+
+        return nodes
+            .map(\.id)
+            .filter { selectedTerminalIDs.contains($0) && $0 != originID }
+    }
+
     func deleteSelection() {
         guard !selectedElementIDs.isEmpty else {
             return
@@ -207,17 +251,20 @@ final class CanvasStore: ObservableObject {
         frameItems.removeAll { deletedFrameIDs.contains($0.id) }
         detachElementsFromFrames(deletedContentIDs)
         selectedElementIDs.removeAll()
+        normalizeTerminalBroadcastState()
     }
 
     func removeNode(id: UUID) {
         nodes.removeAll { $0.id == id }
         detachElementsFromFrames([id])
         selectedElementIDs.remove(id)
+        normalizeTerminalBroadcastState()
     }
 
     func removeFrame(id: UUID) {
         frameItems.removeAll { $0.id == id }
         selectedElementIDs.remove(id)
+        normalizeTerminalBroadcastState()
     }
 
     func selectNode(_ id: UUID?) {
@@ -234,11 +281,13 @@ final class CanvasStore: ObservableObject {
 
     func setSelection(_ ids: Set<UUID>) {
         selectedElementIDs = ids
+        normalizeTerminalBroadcastState()
         bringSelectionToFront()
     }
 
     func clearSelection() {
         selectedElementIDs.removeAll()
+        normalizeTerminalBroadcastState()
     }
 
     func selectElements(intersecting rect: CGRect, append: Bool = false) {
@@ -252,6 +301,7 @@ final class CanvasStore: ObservableObject {
             selectedElementIDs = hitIDs
         }
 
+        normalizeTerminalBroadcastState()
         bringSelectionToFront()
     }
 
@@ -300,6 +350,7 @@ final class CanvasStore: ObservableObject {
             detachElementsFromFrames([id])
             selectedElementIDs.remove(id)
             pendingTextEditID = nil
+            normalizeTerminalBroadcastState()
             return
         }
 
@@ -454,6 +505,14 @@ final class CanvasStore: ObservableObject {
 
     private var selectedFrameableElementIDs: Set<UUID> {
         frameableElementIDs(in: selectedElementIDs)
+    }
+
+    private func normalizeTerminalBroadcastState() {
+        guard !isTerminalBroadcastEnabled || !canBroadcastSelectedTerminals else {
+            return
+        }
+
+        isTerminalBroadcastEnabled = false
     }
 
     private func moveTargetIDs(forAnchorID anchorID: UUID) -> Set<UUID> {

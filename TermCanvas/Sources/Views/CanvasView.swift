@@ -129,6 +129,7 @@ final class CanvasViewportView: NSView {
 
         updateWorldViewTransform()
         syncElementViews()
+        handlePendingTerminalFocusRequest()
         needsDisplay = true
     }
 
@@ -144,6 +145,7 @@ final class CanvasViewportView: NSView {
 
         updateWorldViewTransform()
         syncElementViews()
+        handlePendingTerminalFocusRequest()
         needsDisplay = true
     }
 
@@ -513,6 +515,9 @@ final class CanvasViewportView: NSView {
                 created.onSessionOutput = { [weak self] data in
                     self?.appModel?.recordTerminalOutput(data, for: node.id)
                 }
+                created.onSessionInput = { [weak self] data in
+                    self?.broadcastTerminalInput(data, fromNodeID: node.id)
+                }
                 worldView.addSubview(created)
                 nodeViews[node.id] = created
                 view = created
@@ -526,6 +531,19 @@ final class CanvasViewportView: NSView {
             CATransaction.setDisableActions(true)
             view.frame = node.frame
             CATransaction.commit()
+        }
+    }
+
+    private func broadcastTerminalInput(_ data: Data, fromNodeID originID: UUID) {
+        guard
+            let store,
+            !data.isEmpty
+        else {
+            return
+        }
+
+        for targetID in store.terminalBroadcastTargetIDs(forOriginID: originID) {
+            nodeViews[targetID]?.sendInput(data)
         }
     }
 
@@ -589,6 +607,31 @@ final class CanvasViewportView: NSView {
                     view.beginEditing()
                 }
             }
+        }
+    }
+
+    private func handlePendingTerminalFocusRequest() {
+        guard
+            let store,
+            let terminalID = store.pendingTerminalFocusID,
+            let nodeView = nodeViews[terminalID]
+        else {
+            return
+        }
+
+        DispatchQueue.main.async { [weak self, weak nodeView] in
+            guard
+                let self,
+                let store = self.store,
+                let nodeView,
+                store.pendingTerminalFocusID == terminalID
+            else {
+                return
+            }
+
+            store.acknowledgePendingTerminalFocus(id: terminalID)
+            store.activateElement(terminalID)
+            nodeView.focusTerminal()
         }
     }
 
@@ -1069,6 +1112,7 @@ final class TerminalNodeView: NSView {
     var onTerminalActivation: (() -> Void)?
     var onTitleCommit: ((String) -> Void)?
     var onSessionOutput: ((Data) -> Void)?
+    var onSessionInput: ((Data) -> Void)?
 
     var title = "" {
         didSet {
@@ -1198,6 +1242,9 @@ final class TerminalNodeView: NSView {
         terminalView.onOutput = { [weak self] data in
             self?.onSessionOutput?(data)
         }
+        terminalView.onInput = { [weak self] data in
+            self?.onSessionInput?(data)
+        }
 
         addSubview(shellView)
         addSubview(selectionOutlineView)
@@ -1310,6 +1357,10 @@ final class TerminalNodeView: NSView {
         terminalView.focusTerminal()
     }
 
+    func sendInput(_ data: Data) {
+        terminalView.sendInput(data)
+    }
+
     private func updateAppearance() {
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.borderWidth = 0
@@ -1380,6 +1431,7 @@ final class TerminalNodeView: NSView {
     }
 
     private func beginTitleEditing() {
+        terminalView.suppressAutoFocus()
         titleEditor.stringValue = title
         titleLabel.isHidden = true
         titleEditor.isHidden = false
@@ -2278,6 +2330,7 @@ final class ResizeHandleView: NSView {
 final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHandler {
     var onActivate: (() -> Void)?
     var onOutput: ((Data) -> Void)?
+    var onInput: ((Data) -> Void)?
 
     var logicalSize: CGSize = .zero {
         didSet {
@@ -2295,6 +2348,7 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
     private var lastGridSize = TerminalGridSize(columns: 100, rows: 30)
     private var lastFittedLogicalSize: CGSize = .zero
     private let initialTranscript: Data?
+    private var shouldAutoFocusOnReady = true
 
     init(initialTranscript: Data? = nil) {
         self.initialTranscript = initialTranscript
@@ -2333,15 +2387,30 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
     }
 
     func focusTerminal() {
+        shouldAutoFocusOnReady = false
         window?.makeFirstResponder(self)
         evaluateJavaScript("window.termBridge && window.termBridge.focus();")
+    }
+
+    func sendInput(_ data: Data) {
+        guard !data.isEmpty else {
+            return
+        }
+
+        session?.write(data)
+    }
+
+    func suppressAutoFocus() {
+        shouldAutoFocusOnReady = false
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isReady = true
         flushBufferedOutput()
         fitToLogicalSizeIfNeeded(force: true)
-        focusTerminal()
+        if shouldAutoFocusOnReady {
+            focusTerminal()
+        }
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -2359,6 +2428,7 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
             }
 
             session?.write(data)
+            onInput?(data)
         case "resize":
             guard
                 let columns = payload["cols"] as? Int,

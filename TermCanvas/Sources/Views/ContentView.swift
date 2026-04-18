@@ -48,6 +48,11 @@ struct ContentView: View {
             zoomSection
 
             if store.selectionCount > 0 {
+                if store.canBroadcastSelectedTerminals {
+                    separator
+                    broadcastSection
+                }
+
                 if store.canWrapSelectionInFrame {
                     separator
                     frameSection
@@ -168,6 +173,27 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .help("Delete the current selection")
+    }
+
+    private var broadcastSection: some View {
+        Button {
+            store.setTerminalBroadcastEnabled(!store.isTerminalBroadcastEnabled)
+            if store.isTerminalBroadcastEnabled {
+                store.requestFocusOnSelectedTerminal()
+            }
+        } label: {
+            Label("Broadcast", systemImage: "dot.radiowaves.left.and.right")
+                .font(.system(size: 13, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(store.isTerminalBroadcastEnabled ? Color.black : Color(red: 0.76, green: 0.90, blue: 1.0))
+                .background(
+                    Capsule()
+                        .fill(store.isTerminalBroadcastEnabled ? Color(red: 0.74, green: 0.90, blue: 1.0) : Color.cyan.opacity(0.12))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Mirror typed input from one selected terminal to the others")
     }
 
     private var frameSection: some View {
