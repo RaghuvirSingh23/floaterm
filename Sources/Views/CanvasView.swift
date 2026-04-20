@@ -2462,7 +2462,7 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
     }
 
     private func loadFrontend() {
-        guard let url = Bundle.module.url(forResource: "index", withExtension: "html", subdirectory: "Terminal") else {
+        guard let url = AppResourceLocator.terminalFrontendURL() else {
             loadHTMLString(
                 """
                 <html><body style="background:#111;color:#fff;font-family:Menlo,monospace;padding:24px;">Missing terminal frontend resources.</body></html>
