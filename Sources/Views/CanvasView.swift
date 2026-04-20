@@ -1135,7 +1135,7 @@ final class TerminalNodeView: NSView {
     private let titlebarHeight: CGFloat = 24
     private let titleAfterCloseGap: CGFloat = 14
     private let titleTrailingInset: CGFloat = 14
-    private let titleButtonGap: CGFloat = 7
+    private let titleButtonGap: CGFloat = 8
     private let titleButtonSize: CGFloat = 12
     private let contentHorizontalInset: CGFloat = 1
     private let contentBottomInset: CGFloat = 1
@@ -1317,10 +1317,11 @@ final class TerminalNodeView: NSView {
             titleNaturalWidth,
             max(40, titleClusterAvailableWidth - titleButtonSize - titleButtonGap)
         )
-        let titleClusterWidth = titleWidth + titleButtonGap + titleButtonSize
-        let titleClusterX = titleClusterMinX + max((titleClusterAvailableWidth - titleClusterWidth) * 0.5, 0)
+        let centeredTitleX = floor(titlebarFrame.midX - (titleWidth * 0.5))
+        let maxTitleX = max(titleClusterMinX, titleClusterMaxX - titleWidth - titleButtonGap - titleButtonSize)
+        let titleX = min(max(centeredTitleX, titleClusterMinX), maxTitleX)
         let titleFrame = CGRect(
-            x: titleClusterX,
+            x: titleX,
             y: floor(titlebarFrame.midY - (titleHeight * 0.5)),
             width: titleWidth,
             height: titleHeight
@@ -1462,7 +1463,7 @@ final class TerminalNodeView: NSView {
         let text = visibleTitle.isEmpty ? " " : visibleTitle
         let font = titleLabel.font ?? .systemFont(ofSize: 12.5, weight: .semibold)
         let measuredWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-        return max(40, measuredWidth)
+        return max(40, measuredWidth + 8)
     }
 
     private func layoutResizeHandles() {
