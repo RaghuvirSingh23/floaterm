@@ -1,6 +1,8 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.colorScheme) private var colorScheme
     private let appModel: AppModel
     @ObservedObject private var store: CanvasStore
     @ObservedObject private var settings: AppSettingsStore
@@ -16,7 +18,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            CanvasViewRepresentable(store: store, appModel: appModel)
+            CanvasViewRepresentable(store: store, appModel: appModel, appearanceMode: settings.appAppearanceMode)
                 .ignoresSafeArea()
 
             VStack(spacing: 0) {
@@ -42,12 +44,16 @@ struct ContentView: View {
 
                 HStack {
                     Spacer()
-                    CanvasMinimapView(store: store, isExpanded: isMinimapExpanded)
+                    CanvasMinimapView(store: store, theme: theme, isExpanded: isMinimapExpanded)
                 }
                 .padding(.trailing, 16)
                 .padding(.bottom, 16)
             }
+
+            WindowAppearanceView(mode: settings.appAppearanceMode)
+                .frame(width: 0, height: 0)
         }
+        .preferredColorScheme(settings.appAppearanceMode.preferredColorScheme)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             store.seedInitialNodeIfNeeded()
@@ -55,6 +61,10 @@ struct ContentView: View {
         .onChange(of: store.minimapActivityTick) { _, _ in
             pulseMinimap()
         }
+    }
+
+    private var theme: FloatermTheme {
+        FloatermTheme(colorScheme: colorScheme)
     }
 
     private var toolbar: some View {
@@ -84,9 +94,9 @@ struct ContentView: View {
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(
             Capsule()
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .strokeBorder(Color(nsColor: theme.toolbarBorder), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.24), radius: 18, x: 0, y: 10)
+        .shadow(color: Color(nsColor: theme.toolbarShadow), radius: 18, x: 0, y: 10)
     }
 
     private var settingsButton: some View {
@@ -99,8 +109,9 @@ struct ContentView: View {
                 .background(.ultraThinMaterial, in: Circle())
                 .overlay(
                     Circle()
-                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                        .strokeBorder(Color(nsColor: theme.toolbarBorder), lineWidth: 1)
                 )
+                .foregroundStyle(Color(nsColor: theme.toolbarPrimaryText))
         }
         .buttonStyle(.plain)
         .popover(isPresented: $isShowingSettings, arrowEdge: .top) {
@@ -113,6 +124,17 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Settings")
                 .font(.system(size: 17, weight: .semibold))
+
+            Text("Appearance")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Picker("Appearance", selection: $settings.appAppearanceMode) {
+                ForEach(AppAppearanceMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
 
             Text("Terminal Persistence")
                 .font(.system(size: 12, weight: .semibold))
@@ -145,10 +167,10 @@ struct ContentView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .foregroundStyle(store.tool == tool ? Color.black : Color.primary)
+                        .foregroundStyle(store.tool == tool ? Color(nsColor: theme.toolbarSelectedText) : Color(nsColor: theme.toolbarPrimaryText))
                         .background(
                             Capsule()
-                                .fill(store.tool == tool ? Color.white : Color.white.opacity(0.06))
+                                .fill(store.tool == tool ? Color(nsColor: theme.toolbarSelectedFill) : Color(nsColor: theme.toolbarControlFill))
                         )
                 }
                 .buttonStyle(.plain)
@@ -180,7 +202,7 @@ struct ContentView: View {
                     .padding(.vertical, 7)
                     .background(
                         Capsule()
-                            .fill(Color.white.opacity(0.06))
+                            .fill(Color(nsColor: theme.toolbarControlFill))
                     )
             }
             .buttonStyle(.plain)
@@ -196,10 +218,10 @@ struct ContentView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .foregroundStyle(Color(red: 0.98, green: 0.53, blue: 0.50))
+                .foregroundStyle(Color(nsColor: theme.toolbarDeleteText))
                 .background(
                     Capsule()
-                        .fill(Color.red.opacity(0.10))
+                        .fill(Color(nsColor: theme.toolbarDeleteFill))
                 )
         }
         .buttonStyle(.plain)
@@ -217,10 +239,18 @@ struct ContentView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .foregroundStyle(store.isTerminalBroadcastEnabled ? Color.black : Color(red: 0.76, green: 0.90, blue: 1.0))
+                .foregroundStyle(
+                    store.isTerminalBroadcastEnabled
+                        ? Color(nsColor: theme.toolbarBroadcastEnabledText)
+                        : Color(nsColor: theme.toolbarBroadcastText)
+                )
                 .background(
                     Capsule()
-                        .fill(store.isTerminalBroadcastEnabled ? Color(red: 0.74, green: 0.90, blue: 1.0) : Color.cyan.opacity(0.12))
+                        .fill(
+                            store.isTerminalBroadcastEnabled
+                                ? Color(nsColor: theme.toolbarBroadcastEnabledFill)
+                                : Color(nsColor: theme.toolbarBroadcastFill)
+                        )
                 )
         }
         .buttonStyle(.plain)
@@ -235,10 +265,10 @@ struct ContentView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .foregroundStyle(Color(red: 1.0, green: 0.83, blue: 0.52))
+                .foregroundStyle(Color(nsColor: theme.toolbarFrameText))
                 .background(
                     Capsule()
-                        .fill(Color.orange.opacity(0.11))
+                        .fill(Color(nsColor: theme.toolbarFrameFill))
                 )
         }
         .buttonStyle(.plain)
@@ -248,18 +278,18 @@ struct ContentView: View {
     private var selectionBadge: some View {
         Text("\(store.selectionCount) selected")
             .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Color(nsColor: theme.toolbarSecondaryText))
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(
                 Capsule()
-                    .fill(Color.white.opacity(0.05))
+                    .fill(Color(nsColor: theme.selectionBadgeFill))
             )
     }
 
     private var separator: some View {
         Capsule()
-            .fill(Color.white.opacity(0.08))
+            .fill(Color(nsColor: theme.toolbarDivider))
             .frame(width: 1, height: 30)
     }
 
@@ -268,9 +298,10 @@ struct ContentView: View {
             Image(systemName: systemName)
                 .font(.system(size: 13, weight: .bold))
                 .frame(width: 32, height: 32)
+                .foregroundStyle(Color(nsColor: theme.toolbarPrimaryText))
                 .background(
                     Circle()
-                        .fill(Color.white.opacity(0.06))
+                        .fill(Color(nsColor: theme.toolbarControlFill))
                 )
         }
         .buttonStyle(.plain)
@@ -306,5 +337,40 @@ struct ContentView: View {
                 isMinimapExpanded = false
             }
         }
+    }
+}
+
+private struct WindowAppearanceView: NSViewRepresentable {
+    let mode: AppAppearanceMode
+
+    func makeNSView(context: Context) -> WindowAppearanceHostView {
+        let view = WindowAppearanceHostView()
+        view.mode = mode
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowAppearanceHostView, context: Context) {
+        nsView.mode = mode
+    }
+}
+
+private final class WindowAppearanceHostView: NSView {
+    var mode: AppAppearanceMode = .dark {
+        didSet {
+            guard mode != oldValue else {
+                return
+            }
+
+            applyAppearance()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        window?.appearance = mode.nsAppearance
     }
 }

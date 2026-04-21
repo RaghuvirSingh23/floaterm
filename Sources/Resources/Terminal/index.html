@@ -8,13 +8,18 @@
     />
     <link rel="stylesheet" href="xterm.css" />
     <style>
+      :root {
+        --term-background: #000;
+        --term-foreground: #fff;
+      }
+
       html,
       body {
         width: 100%;
         height: 100%;
         margin: 0;
         overflow: hidden;
-        background: #000;
+        background: var(--term-background);
       }
 
       #terminal {
@@ -36,6 +41,12 @@
 
       .xterm-viewport {
         overflow: hidden !important;
+        background: var(--term-background) !important;
+      }
+
+      .xterm .composition-view {
+        background: var(--term-background) !important;
+        color: var(--term-foreground) !important;
       }
     </style>
   </head>
@@ -46,17 +57,8 @@
     <script src="addon-fit.js"></script>
     <script>
       const container = document.getElementById("terminal");
-      const term = new Terminal({
-        allowTransparency: false,
-        cursorBlink: true,
-        cursorStyle: "block",
-        fontFamily: '"SF Mono", Menlo, Monaco, monospace',
-        fontSize: 13,
-        letterSpacing: 0.2,
-        lineHeight: 1.15,
-        macOptionIsMeta: true,
-        scrollback: 6000,
-        theme: {
+      const TERM_THEMES = {
+        dark: {
           background: "#000000",
           foreground: "#ffffff",
           cursor: "#ffffff",
@@ -77,11 +79,54 @@
           brightMagenta: "#d670d6",
           brightCyan: "#29b8db",
           brightWhite: "#ffffff"
+        },
+        light: {
+          background: "#f6f3ee",
+          foreground: "#1f2328",
+          cursor: "#1f2328",
+          selectionBackground: "#c8d7f8",
+          black: "#1f2328",
+          red: "#c0392b",
+          green: "#1f8b4c",
+          yellow: "#8f6a00",
+          blue: "#005cc5",
+          magenta: "#8250df",
+          cyan: "#0f766e",
+          white: "#e8ecf1",
+          brightBlack: "#5f6773",
+          brightRed: "#cf222e",
+          brightGreen: "#2da44e",
+          brightYellow: "#bf8700",
+          brightBlue: "#0969da",
+          brightMagenta: "#a475f9",
+          brightCyan: "#1b7f83",
+          brightWhite: "#ffffff"
         }
+      };
+
+      function applyTheme(name) {
+        const theme = TERM_THEMES[name] ?? TERM_THEMES.dark;
+        term.options.theme = theme;
+        document.documentElement.style.setProperty("--term-background", theme.background);
+        document.documentElement.style.setProperty("--term-foreground", theme.foreground);
+      }
+
+      const term = new Terminal({
+        allowTransparency: false,
+        cursorBlink: true,
+        cursorStyle: "block",
+        fontFamily: '"SF Mono", Menlo, Monaco, monospace',
+        fontSize: 13,
+        letterSpacing: 0.2,
+        lineHeight: 1.15,
+        macOptionIsMeta: true,
+        scrollback: 6000,
+        theme: TERM_THEMES.dark
       });
       const fitAddon = new FitAddon.FitAddon();
       term.loadAddon(fitAddon);
       term.open(container);
+      applyTheme("dark");
 
       const encoder = new TextEncoder();
 
@@ -133,6 +178,7 @@
         markExited() {
           term.write("\r\n\x1b[90m[terminal exited]\x1b[0m\r\n");
         },
+        applyTheme,
         writeBase64(base64) {
           term.write(base64ToBytes(base64));
         }

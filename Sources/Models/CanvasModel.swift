@@ -86,6 +86,25 @@ enum TerminalPersistenceMode: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum AppAppearanceMode: String, CaseIterable, Codable, Identifiable {
+    case system
+    case dark
+    case light
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system:
+            return "System"
+        case .dark:
+            return "Dark"
+        case .light:
+            return "Light"
+        }
+    }
+}
+
 struct WorkspaceSnapshot: Codable, Equatable {
     var nodes: [TerminalNode]
     var frameItems: [CanvasFrameItem]

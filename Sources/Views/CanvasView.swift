@@ -5,15 +5,16 @@ import WebKit
 struct CanvasViewRepresentable: NSViewRepresentable {
     @ObservedObject var store: CanvasStore
     let appModel: AppModel
+    let appearanceMode: AppAppearanceMode
 
     func makeNSView(context: Context) -> CanvasViewportView {
         let view = CanvasViewportView()
-        view.apply(store: store, appModel: appModel)
+        view.apply(store: store, appModel: appModel, appearanceMode: appearanceMode)
         return view
     }
 
     func updateNSView(_ nsView: CanvasViewportView, context: Context) {
-        nsView.apply(store: store, appModel: appModel)
+        nsView.apply(store: store, appModel: appModel, appearanceMode: appearanceMode)
     }
 }
 
@@ -84,6 +85,8 @@ final class CanvasViewportView: NSView {
 
     private weak var store: CanvasStore?
     private weak var appModel: AppModel?
+    private var appearanceMode: AppAppearanceMode = .dark
+    private var theme = FloatermTheme(appearance: .dark)
     private let worldView = NSView()
     private var frameViews: [UUID: CanvasFrameItemView] = [:]
     private var nodeViews: [UUID: TerminalNodeView] = [:]
@@ -111,6 +114,12 @@ final class CanvasViewportView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(self)
+        updateThemeIfNeeded()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateThemeIfNeeded()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -133,10 +142,12 @@ final class CanvasViewportView: NSView {
         needsDisplay = true
     }
 
-    func apply(store: CanvasStore, appModel: AppModel) {
+    func apply(store: CanvasStore, appModel: AppModel, appearanceMode: AppAppearanceMode) {
         self.store = store
         self.appModel = appModel
+        self.appearanceMode = appearanceMode
         store.updateViewportSize(bounds.size)
+        updateThemeIfNeeded()
 
         if !hasBootstrappedCamera, !bounds.size.equalTo(.zero) {
             store.bootstrapCameraIfNeeded(center: CGPoint(x: bounds.width * 0.5, y: bounds.height * 0.5))
@@ -157,7 +168,7 @@ final class CanvasViewportView: NSView {
         }
 
         let background = NSRect(origin: .zero, size: bounds.size)
-        NSColor(calibratedRed: 0.045, green: 0.06, blue: 0.085, alpha: 1).setFill()
+        theme.canvasBackground.setFill()
         background.fill()
 
         drawGrid(camera: store.camera, in: dirtyRect)
@@ -459,6 +470,7 @@ final class CanvasViewportView: NSView {
             }
 
             view.title = frameItem.title
+            view.theme = theme
             view.isSelected = store.selectedElementIDs.contains(frameItem.id)
             view.isInteractionEnabled = store.tool == .select
             view.layer?.zPosition = LayerDepth.frameBase + CGFloat(index) + (view.isSelected ? LayerDepth.selectedBoost : 0)
@@ -524,6 +536,7 @@ final class CanvasViewportView: NSView {
             }
 
             view.title = node.title
+            view.theme = theme
             view.isSelected = store.selectedElementIDs.contains(node.id)
             view.layer?.zPosition = LayerDepth.nodeBase + CGFloat(index) + (view.isSelected ? LayerDepth.selectedBoost : 0)
 
@@ -589,6 +602,7 @@ final class CanvasViewportView: NSView {
 
             view.text = item.text
             view.wrapWidth = item.wrapWidth
+            view.theme = theme
             view.isSelected = store.selectedElementIDs.contains(item.id)
             view.layer?.zPosition = LayerDepth.textBase + CGFloat(index) + (view.isSelected ? LayerDepth.selectedBoost : 0)
 
@@ -688,7 +702,7 @@ final class CanvasViewportView: NSView {
             to: visibleMaxWorld,
             step: step,
             lineWidth: 1,
-            color: NSColor.white.withAlphaComponent(0.05),
+            color: theme.gridMinor,
             camera: camera
         )
         drawGridLines(
@@ -696,7 +710,7 @@ final class CanvasViewportView: NSView {
             to: visibleMaxWorld,
             step: majorStep,
             lineWidth: 1.2,
-            color: NSColor.systemMint.withAlphaComponent(0.08),
+            color: theme.gridMajor,
             camera: camera
         )
     }
@@ -766,6 +780,29 @@ final class CanvasViewportView: NSView {
             height: abs(endWorld.y - startWorld.y)
         )
     }
+
+    private func updateThemeIfNeeded() {
+        let resolvedTheme = FloatermTheme(mode: appearanceMode, effectiveAppearance: effectiveAppearance)
+        guard resolvedTheme != theme else {
+            return
+        }
+
+        theme = resolvedTheme
+        applyThemeToElementViews()
+        needsDisplay = true
+    }
+
+    private func applyThemeToElementViews() {
+        for view in frameViews.values {
+            view.theme = theme
+        }
+        for view in nodeViews.values {
+            view.theme = theme
+        }
+        for view in textViews.values {
+            view.theme = theme
+        }
+    }
 }
 
 final class CanvasFrameItemView: NSView {
@@ -795,6 +832,16 @@ final class CanvasFrameItemView: NSView {
             }
 
             window?.invalidateCursorRects(for: self)
+        }
+    }
+
+    var theme = FloatermTheme(appearance: .dark) {
+        didSet {
+            guard theme != oldValue else {
+                return
+            }
+
+            updateAppearance()
         }
     }
 
@@ -1007,25 +1054,15 @@ final class CanvasFrameItemView: NSView {
     }
 
     private func updateAppearance() {
-        let borderColor = isSelected
-            ? NSColor(calibratedRed: 0.96, green: 0.74, blue: 0.33, alpha: 0.96)
-            : NSColor(calibratedWhite: 0.36, alpha: 0.92)
-        let fillColor = isSelected
-            ? NSColor(calibratedRed: 0.99, green: 0.65, blue: 0.16, alpha: 0.08)
-            : NSColor(calibratedWhite: 1, alpha: 0.025)
-        let badgeFillColor = NSColor(calibratedRed: 0.13, green: 0.14, blue: 0.17, alpha: 0.96)
-        let badgeBorderColor = isSelected
-            ? NSColor(calibratedRed: 0.96, green: 0.74, blue: 0.33, alpha: 0.55)
-            : NSColor(calibratedWhite: 0.30, alpha: 0.92)
-        let titleColor = isSelected
-            ? NSColor(calibratedWhite: 0.92, alpha: 1)
-            : NSColor(calibratedWhite: 0.78, alpha: 1)
-        let editButtonColor = isSelected
-            ? NSColor(calibratedRed: 0.97, green: 0.80, blue: 0.43, alpha: 1)
-            : NSColor(calibratedWhite: 0.62, alpha: 1)
+        let borderColor = isSelected ? theme.frameSelectedBorder : theme.frameBorder
+        let fillColor = isSelected ? theme.frameSelectedFill : theme.frameFill
+        let badgeFillColor = theme.frameBadgeFill
+        let badgeBorderColor = isSelected ? theme.frameBadgeSelectedBorder : theme.frameBadgeBorder
+        let titleColor = isSelected ? theme.frameTitleSelectedText : theme.frameTitleText
+        let editButtonColor = isSelected ? theme.frameEditButtonSelected : theme.frameEditButton
 
         selectionOutlineView.isHidden = !isSelected
-        selectionOutlineView.strokeColor = NSColor(calibratedWhite: 0.84, alpha: 0.92)
+        selectionOutlineView.strokeColor = theme.selectionOutline
         titleLabel.textColor = titleColor
         titleEditor.textColor = titleColor
         editTitleButton.contentTintColor = editButtonColor
@@ -1124,6 +1161,17 @@ final class TerminalNodeView: NSView {
 
     var isSelected = false {
         didSet {
+            updateAppearance()
+        }
+    }
+
+    var theme = FloatermTheme(appearance: .dark) {
+        didSet {
+            guard theme != oldValue else {
+                return
+            }
+
+            terminalView.appearanceTheme = theme.appearance
             updateAppearance()
         }
     }
@@ -1367,16 +1415,16 @@ final class TerminalNodeView: NSView {
         layer?.borderWidth = 0
         layer?.borderColor = NSColor.clear.cgColor
         layer?.shadowOpacity = 0
-        let shellBorderColor = NSColor(calibratedWhite: isSelected ? 0.34 : 0.26, alpha: 1)
-        let shellFillColor = NSColor(calibratedRed: 0.11, green: 0.12, blue: 0.14, alpha: 0.98)
-        let selectionOutlineColor = NSColor(calibratedWhite: 0.82, alpha: 0.9)
-        let titlebarFillColor = NSColor(calibratedRed: 0.20, green: 0.21, blue: 0.24, alpha: 0.98)
-        let separatorColor = NSColor(calibratedWhite: 0.30, alpha: 1)
-        let contentBorderColor = NSColor(calibratedWhite: isSelected ? 0.25 : 0.20, alpha: 1)
-        let titleColor = NSColor(calibratedWhite: isSelected ? 0.84 : 0.70, alpha: 1)
-        let closeButtonFillColor = NSColor(calibratedRed: 1.0, green: 0.37, blue: 0.33, alpha: isSelected ? 1 : 0.92)
-        let closeButtonGlyphColor = NSColor(calibratedRed: 0.34, green: 0.12, blue: 0.11, alpha: 0.96)
-        let editButtonColor = NSColor(calibratedWhite: isSelected ? 0.80 : 0.66, alpha: 1)
+        let shellBorderColor = isSelected ? theme.terminalSelectedShellBorder : theme.terminalShellBorder
+        let shellFillColor = theme.terminalShellFill
+        let selectionOutlineColor = theme.selectionOutline
+        let titlebarFillColor = theme.terminalTitlebarFill
+        let separatorColor = theme.terminalSeparator
+        let contentBorderColor = isSelected ? theme.terminalSelectedContentBorder : theme.terminalContentBorder
+        let titleColor = isSelected ? theme.terminalTitleSelectedText : theme.terminalTitleText
+        let closeButtonFillColor = isSelected ? theme.terminalCloseSelectedFill : theme.terminalCloseFill
+        let closeButtonGlyphColor = theme.terminalCloseGlyph
+        let editButtonColor = isSelected ? theme.terminalEditButtonSelected : theme.terminalEditButton
 
         closeButton.isHidden = false
         closeButton.contentTintColor = closeButtonGlyphColor
@@ -1504,6 +1552,16 @@ final class CanvasTextItemView: NSView {
         }
     }
 
+    var theme = FloatermTheme(appearance: .dark) {
+        didSet {
+            guard theme != oldValue else {
+                return
+            }
+
+            updateAppearance()
+        }
+    }
+
     private let textView = EditableCanvasTextView()
     private let horizontalPadding = CanvasGeometry.textPadding.width * 0.5
     private let verticalPadding = CanvasGeometry.textPadding.height * 0.5
@@ -1568,6 +1626,7 @@ final class CanvasTextItemView: NSView {
 
     private func updateAppearance() {
         let showSelection = isSelected && !textView.isEditing
+        textView.foregroundColor = theme.canvasTextColor
         layer?.backgroundColor = showSelection ? NSColor.systemBlue.withAlphaComponent(0.10).cgColor : NSColor.clear.cgColor
         layer?.borderColor = showSelection ? NSColor.systemBlue.withAlphaComponent(0.85).cgColor : NSColor.clear.cgColor
         layer?.borderWidth = showSelection ? 1.25 : 0
@@ -1806,6 +1865,12 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
         window?.firstResponder === textView
     }
 
+    var foregroundColor: NSColor = .white {
+        didSet {
+            applyTextAppearance()
+        }
+    }
+
     private let textView: CanvasIntrinsicTextView
     private let scrollView: NSScrollView
 
@@ -1842,8 +1907,6 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
         textView.isContinuousSpellCheckingEnabled = false
         textView.textContainerInset = .zero
         textView.font = CanvasGeometry.textFont
-        textView.textColor = .white
-        textView.insertionPointColor = .white
         textView.allowsUndo = true
         textView.isEditable = false
         textView.isSelectable = false
@@ -1859,6 +1922,7 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
 
         addSubview(scrollView)
         configureTextContainer()
+        applyTextAppearance()
     }
 
     required init?(coder: NSCoder) {
@@ -1900,6 +1964,24 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
             textView.isHorizontallyResizable = true
             textView.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         }
+    }
+
+    private func applyTextAppearance() {
+        textView.textColor = foregroundColor
+        textView.insertionPointColor = foregroundColor
+        var typingAttributes = textView.typingAttributes
+        typingAttributes[.foregroundColor] = foregroundColor
+        typingAttributes[.font] = CanvasGeometry.textFont
+        textView.typingAttributes = typingAttributes
+
+        guard let storage = textView.textStorage, storage.length > 0 else {
+            return
+        }
+
+        storage.beginEditing()
+        storage.addAttribute(.foregroundColor, value: foregroundColor, range: NSRange(location: 0, length: storage.length))
+        storage.addAttribute(.font, value: CanvasGeometry.textFont, range: NSRange(location: 0, length: storage.length))
+        storage.endEditing()
     }
 }
 
@@ -2353,6 +2435,16 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
         }
     }
 
+    var appearanceTheme: FloatermResolvedAppearance = .dark {
+        didSet {
+            guard appearanceTheme != oldValue else {
+                return
+            }
+
+            applyAppearanceTheme()
+        }
+    }
+
     private var session: TerminalSession?
     private var isReady = false
     private var bufferedChunks: [String] = []
@@ -2417,6 +2509,7 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         isReady = true
+        applyAppearanceTheme()
         flushBufferedOutput()
         fitToLogicalSizeIfNeeded(force: true)
         if shouldAutoFocusOnReady {
@@ -2460,6 +2553,22 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
         default:
             break
         }
+    }
+
+    private func applyAppearanceTheme() {
+        switch appearanceTheme {
+        case .dark:
+            underPageBackgroundColor = .black
+        case .light:
+            underPageBackgroundColor = NSColor(calibratedRed: 0.965, green: 0.955, blue: 0.935, alpha: 1)
+        }
+
+        guard isReady else {
+            return
+        }
+
+        let themeName = appearanceTheme == .light ? "light" : "dark"
+        evaluateJavaScript("window.termBridge && window.termBridge.applyTheme('\(themeName)');")
     }
 
     private func loadFrontend() {

@@ -79,7 +79,7 @@ final class CanvasViewportInteractionTests: XCTestCase {
         let viewport = CanvasViewportView(frame: rootView.bounds)
         viewport.autoresizingMask = [.width, .height]
         rootView.addSubview(viewport)
-        viewport.apply(store: store, appModel: appModel)
+        viewport.apply(store: store, appModel: appModel, appearanceMode: .dark)
         window.makeKeyAndOrderFront(nil)
         window.displayIfNeeded()
         rootView.layoutSubtreeIfNeeded()

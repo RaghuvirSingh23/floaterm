@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CanvasMinimapView: View {
     @ObservedObject var store: CanvasStore
+    let theme: FloatermTheme
     var isExpanded = false
 
     private let maximumMapSize = CGSize(width: 220, height: 152)
@@ -20,20 +21,20 @@ struct CanvasMinimapView: View {
             .padding(padding)
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.black.opacity(0.32))
+                    .fill(Color(nsColor: theme.minimapBackground))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                    .strokeBorder(Color(nsColor: theme.minimapBorder), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.24), radius: 16, x: 0, y: 10)
+            .shadow(color: Color(nsColor: theme.toolbarShadow), radius: 16, x: 0, y: 10)
             .help("Click or drag to pan the canvas")
     }
 
     private func minimapCanvas(worldBounds: CGRect, viewportRect: CGRect, mapSize: CGSize) -> some View {
         Canvas { context, size in
             let canvasRect = CGRect(origin: .zero, size: size)
-            context.fill(Path(canvasRect), with: .color(Color.white.opacity(0.02)))
+            context.fill(Path(canvasRect), with: .color(Color(nsColor: theme.minimapCanvasFill)))
 
             for frameItem in store.frameItems {
                 let rect = mapRect(for: frameItem.frame, in: worldBounds, size: size)
@@ -41,7 +42,7 @@ struct CanvasMinimapView: View {
                 let path = Path(roundedRect: rect, cornerRadius: 4)
                 context.stroke(
                     path,
-                    with: .color(isSelected ? Color.orange.opacity(0.95) : Color.orange.opacity(0.55)),
+                    with: .color(Color(nsColor: isSelected ? theme.minimapFrameSelectedStroke : theme.minimapFrameStroke)),
                     style: StrokeStyle(lineWidth: isSelected ? 1.6 : 1.1, dash: isSelected ? [4, 3] : [])
                 )
             }
@@ -50,10 +51,10 @@ struct CanvasMinimapView: View {
                 let rect = mapRect(for: node.frame, in: worldBounds, size: size)
                 let isSelected = store.selectedElementIDs.contains(node.id)
                 let path = Path(roundedRect: rect, cornerRadius: 3)
-                context.fill(path, with: .color(isSelected ? Color.white.opacity(0.26) : Color.white.opacity(0.14)))
+                context.fill(path, with: .color(Color(nsColor: isSelected ? theme.minimapNodeSelectedFill : theme.minimapNodeFill)))
                 context.stroke(
                     path,
-                    with: .color(isSelected ? Color(red: 0.75, green: 0.94, blue: 1.0) : Color.white.opacity(0.28)),
+                    with: .color(Color(nsColor: isSelected ? theme.minimapNodeSelectedStroke : theme.minimapNodeStroke)),
                     lineWidth: isSelected ? 1.5 : 1
                 )
             }
@@ -64,15 +65,15 @@ struct CanvasMinimapView: View {
                 let path = Path(roundedRect: rect, cornerRadius: 2)
                 context.fill(
                     path,
-                    with: .color(isSelected ? Color(red: 0.60, green: 0.92, blue: 1.0).opacity(0.55) : Color(red: 0.38, green: 0.78, blue: 1.0).opacity(0.32))
+                    with: .color(Color(nsColor: isSelected ? theme.minimapTextSelectedFill : theme.minimapTextFill))
                 )
             }
 
             let viewportPath = Path(roundedRect: mapRect(for: viewportRect, in: worldBounds, size: size), cornerRadius: 4)
-            context.fill(viewportPath, with: .color(Color.white.opacity(0.06)))
+            context.fill(viewportPath, with: .color(Color(nsColor: theme.minimapViewportFill)))
             context.stroke(
                 viewportPath,
-                with: .color(Color.white.opacity(0.95)),
+                with: .color(Color(nsColor: theme.minimapViewportStroke)),
                 style: StrokeStyle(lineWidth: 1.3, dash: [5, 4])
             )
         }
