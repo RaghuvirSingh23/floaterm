@@ -383,12 +383,43 @@ final class CanvasViewportView: NSView {
             return
         }
 
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
         if event.keyCode == 49 {
             spacebarIsDown = true
             return
         }
 
+        if modifiers.contains(.command), let characters = event.charactersIgnoringModifiers?.lowercased() {
+            switch characters {
+            case "a":
+                store.selectAllElements()
+                return
+            case "d":
+                store.duplicateSelection()
+                return
+            case "0":
+                store.resetZoom()
+                return
+            case "+", "=":
+                store.zoom(by: 1.12, around: CGPoint(x: bounds.midX, y: bounds.midY))
+                return
+            case "-", "_":
+                store.zoom(by: 1 / 1.12, around: CGPoint(x: bounds.midX, y: bounds.midY))
+                return
+            default:
+                break
+            }
+        }
+
         switch event.keyCode {
+        case 53:
+            store.clearSelection()
+            store.tool = .select
+            return
+        case 48:
+            store.cycleSelection(backward: modifiers.contains(.shift))
+            return
         case 51, 117:
             store.deleteSelection()
             return
@@ -451,8 +482,8 @@ final class CanvasViewportView: NSView {
                 view = existing
             } else {
                 let created = CanvasFrameItemView(title: frameItem.title)
-                created.onActivate = { [weak self] in
-                    self?.store?.activateElement(frameItem.id)
+                created.onActivate = { [weak self] extendSelection in
+                    self?.store?.activateElement(frameItem.id, extendSelection: extendSelection)
                     self?.window?.makeFirstResponder(self)
                 }
                 created.onMove = { [weak self] delta in
@@ -513,13 +544,17 @@ final class CanvasViewportView: NSView {
                 created.onClose = { [weak self] in
                     self?.store?.removeNode(id: node.id)
                 }
-                created.onChromeActivation = { [weak self] in
-                    self?.store?.activateElement(node.id)
+                created.onChromeActivation = { [weak self] extendSelection in
+                    self?.store?.activateElement(node.id, extendSelection: extendSelection)
                     self?.window?.makeFirstResponder(self)
                 }
-                created.onTerminalActivation = { [weak self, weak created] in
-                    self?.store?.activateElement(node.id)
-                    created?.focusTerminal()
+                created.onTerminalActivation = { [weak self, weak created] extendSelection in
+                    self?.store?.activateElement(node.id, extendSelection: extendSelection)
+                    if extendSelection {
+                        self?.window?.makeFirstResponder(self)
+                    } else {
+                        created?.focusTerminal()
+                    }
                 }
                 created.onTitleCommit = { [weak self] title in
                     self?.store?.renameNode(id: node.id, title: title)
@@ -579,8 +614,8 @@ final class CanvasViewportView: NSView {
                 view = existing
             } else {
                 let created = CanvasTextItemView(text: item.text)
-                created.onActivate = { [weak self] in
-                    self?.store?.activateElement(item.id)
+                created.onActivate = { [weak self] extendSelection in
+                    self?.store?.activateElement(item.id, extendSelection: extendSelection)
                     self?.window?.makeFirstResponder(self)
                 }
                 created.onMove = { [weak self] delta in
@@ -806,7 +841,7 @@ final class CanvasViewportView: NSView {
 }
 
 final class CanvasFrameItemView: NSView {
-    var onActivate: (() -> Void)?
+    var onActivate: ((Bool) -> Void)?
     var onMove: ((CGPoint) -> CanvasSnapState)?
     var onResize: ((ResizeHandle, CGPoint) -> CanvasSnapState)?
     var onTitleCommit: ((String) -> Void)?
@@ -872,7 +907,7 @@ final class CanvasFrameItemView: NSView {
     private lazy var handles: [ResizeHandle: ResizeHandleView] = ResizeHandle.allCases.reduce(into: [:]) { result, handle in
         let view = ResizeHandleView(handle: handle)
         view.onActivate = { [weak self] in
-            self?.onActivate?()
+            self?.onActivate?(false)
         }
         view.onDrag = { [weak self] dragHandle, delta in
             self?.onResize?(dragHandle, delta) ?? .none
@@ -1036,7 +1071,7 @@ final class CanvasFrameItemView: NSView {
 
         interaction = .drag
         snapFeedbackTracker.reset()
-        onActivate?()
+        onActivate?(event.modifierFlags.contains(.shift))
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1093,7 +1128,7 @@ final class CanvasFrameItemView: NSView {
     }
 
     private func beginTitleEditing() {
-        onActivate?()
+        onActivate?(false)
         titleEditor.stringValue = title
         titleLabel.isHidden = true
         titleEditor.isHidden = false
@@ -1145,8 +1180,8 @@ final class TerminalNodeView: NSView {
     var onMove: ((CGPoint) -> CanvasSnapState)?
     var onResize: ((ResizeHandle, CGPoint) -> CanvasSnapState)?
     var onClose: (() -> Void)?
-    var onChromeActivation: (() -> Void)?
-    var onTerminalActivation: (() -> Void)?
+    var onChromeActivation: ((Bool) -> Void)?
+    var onTerminalActivation: ((Bool) -> Void)?
     var onTitleCommit: ((String) -> Void)?
     var onSessionOutput: ((Data) -> Void)?
     var onSessionInput: ((Data) -> Void)?
@@ -1212,7 +1247,7 @@ final class TerminalNodeView: NSView {
     private lazy var handles: [ResizeHandle: ResizeHandleView] = ResizeHandle.allCases.reduce(into: [:]) { result, handle in
         let view = ResizeHandleView(handle: handle)
         view.onActivate = { [weak self] in
-            self?.onChromeActivation?()
+            self?.onChromeActivation?(false)
         }
         view.onDrag = { [weak self] dragHandle, delta in
             self?.onResize?(dragHandle, delta) ?? .none
@@ -1271,8 +1306,8 @@ final class TerminalNodeView: NSView {
         editTitleButton.symbolPointSize = 9
         editTitleButton.symbolWeight = .medium
 
-        dragStripView.onActivate = { [weak self] in
-            self?.onChromeActivation?()
+        dragStripView.onActivate = { [weak self] extendSelection in
+            self?.onChromeActivation?(extendSelection)
         }
         dragStripView.onDrag = { [weak self] delta in
             self?.onMove?(delta) ?? .none
@@ -1284,8 +1319,8 @@ final class TerminalNodeView: NSView {
             self?.onClose?()
         }
 
-        terminalView.onActivate = { [weak self] in
-            self?.onTerminalActivation?()
+        terminalView.onActivate = { [weak self] extendSelection in
+            self?.onTerminalActivation?(extendSelection)
         }
         terminalView.onOutput = { [weak self] data in
             self?.onSessionOutput?(data)
@@ -1527,7 +1562,7 @@ final class TerminalNodeView: NSView {
 }
 
 final class CanvasTextItemView: NSView {
-    var onActivate: (() -> Void)?
+    var onActivate: ((Bool) -> Void)?
     var onMove: ((CGPoint) -> CanvasSnapState)?
     var onResize: ((ResizeHandle, CGPoint) -> CanvasSnapState)?
     var onTextChange: ((String) -> Void)?
@@ -1570,7 +1605,7 @@ final class CanvasTextItemView: NSView {
     private lazy var handles: [ResizeHandle: ResizeHandleView] = [ResizeHandle.left, .right].reduce(into: [ResizeHandle: ResizeHandleView]()) { result, handle in
         let view = ResizeHandleView(handle: handle)
         view.onActivate = { [weak self] in
-            self?.onActivate?()
+            self?.onActivate?(false)
         }
         view.onDrag = { [weak self] handle, delta in
             self?.onResize?(handle, delta) ?? .none
@@ -1587,8 +1622,8 @@ final class CanvasTextItemView: NSView {
 
         textView.text = text
         textView.wrapWidth = nil
-        textView.onActivate = { [weak self] in
-            self?.onActivate?()
+        textView.onActivate = { [weak self] extendSelection in
+            self?.onActivate?(extendSelection)
         }
         textView.onDrag = { [weak self] delta in
             self?.onMove?(delta) ?? .none
@@ -1620,7 +1655,7 @@ final class CanvasTextItemView: NSView {
     }
 
     func beginEditing() {
-        onActivate?()
+        onActivate?(false)
         textView.beginEditing()
     }
 
@@ -1841,7 +1876,7 @@ final class TitleEditingTextView: NSTextView {
 }
 
 final class EditableCanvasTextView: NSView, NSTextViewDelegate {
-    var onActivate: (() -> Void)?
+    var onActivate: ((Bool) -> Void)?
     var onDrag: ((CGPoint) -> CanvasSnapState)?
     var onChange: ((String) -> Void)?
     var onCommit: ((String) -> Void)?
@@ -1910,8 +1945,8 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
         textView.allowsUndo = true
         textView.isEditable = false
         textView.isSelectable = false
-        textView.onActivate = { [weak self] in
-            self?.onActivate?()
+        textView.onActivate = { [weak self] extendSelection in
+            self?.onActivate?(extendSelection)
         }
         textView.onDrag = { [weak self] delta in
             self?.onDrag?(delta) ?? .none
@@ -1986,7 +2021,7 @@ final class EditableCanvasTextView: NSView, NSTextViewDelegate {
 }
 
 final class CanvasIntrinsicTextView: NSTextView {
-    var onActivate: (() -> Void)?
+    var onActivate: ((Bool) -> Void)?
     var onDrag: ((CGPoint) -> CanvasSnapState)?
     var onCommit: (() -> Void)?
 
@@ -1998,7 +2033,7 @@ final class CanvasIntrinsicTextView: NSTextView {
             return
         }
 
-        onActivate?()
+        onActivate?(event.modifierFlags.contains(.shift))
         snapFeedbackTracker.reset()
 
         if event.clickCount >= 2 {
@@ -2171,7 +2206,7 @@ final class SnapFeedbackTracker {
 
 final class DragHeaderView: NSView {
     var onDrag: ((CGPoint) -> CanvasSnapState)?
-    var onActivate: (() -> Void)?
+    var onActivate: ((Bool) -> Void)?
     var onEditTitle: (() -> Void)?
     var onClose: (() -> Void)?
     var cursorExclusionRects: [CGRect] = []
@@ -2251,7 +2286,7 @@ final class DragHeaderView: NSView {
 
         interaction = .drag
         snapFeedbackTracker.reset()
-        onActivate?()
+        onActivate?(event.modifierFlags.contains(.shift))
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -2421,7 +2456,7 @@ final class ResizeHandleView: NSView {
 }
 
 final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHandler {
-    var onActivate: (() -> Void)?
+    var onActivate: ((Bool) -> Void)?
     var onOutput: ((Data) -> Void)?
     var onInput: ((Data) -> Void)?
 
@@ -2485,7 +2520,11 @@ final class TerminalWebView: WKWebView, WKNavigationDelegate, WKScriptMessageHan
     }
 
     override func mouseDown(with event: NSEvent) {
-        onActivate?()
+        let extendSelection = event.modifierFlags.contains(.shift)
+        onActivate?(extendSelection)
+        if extendSelection {
+            return
+        }
         super.mouseDown(with: event)
     }
 

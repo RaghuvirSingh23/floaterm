@@ -6,6 +6,7 @@ import Foundation
 final class CanvasStore: ObservableObject {
     private let maximumNodeTitleLength = 20
     private let maximumFrameTitleLength = 40
+    private let duplicateOffset = CGPoint(x: 48, y: -48)
 
     @Published private(set) var nodes: [TerminalNode] = []
     @Published private(set) var frameItems: [CanvasFrameItem] = []
@@ -134,17 +135,12 @@ final class CanvasStore: ObservableObject {
             height: max(standardizedFrame.height, CanvasGeometry.minimumNodeSize.height)
         )
 
-        let node = TerminalNode(
-            id: UUID(),
+        let nodeID = appendTerminalNode(
             title: String(format: "TERM %02d", terminalCounter),
             frame: normalizedFrame
         )
-        terminalCounter += 1
-
-        nodes.append(node)
-        updateFrameMemberships(for: [node.id])
-        setSelection([node.id])
-        return node.id
+        setSelection([nodeID])
+        return nodeID
     }
 
     @discardableResult
@@ -159,33 +155,25 @@ final class CanvasStore: ObservableObject {
         let memberIDs = orderedFrameableElementIDs(in: childIDs)
         detachElementsFromFrames(Set(memberIDs))
 
-        let frameItem = CanvasFrameItem(
-            id: UUID(),
+        let frameID = appendFrameItem(
             title: String(format: "FRAME %02d", frameCounter),
             frame: normalizedFrame,
             childIDs: memberIDs
         )
-        frameCounter += 1
-
-        frameItems.append(frameItem)
-        setSelection([frameItem.id])
-        return frameItem.id
+        setSelection([frameID])
+        return frameID
     }
 
     @discardableResult
     func createText(at point: CGPoint, content: String = "") -> UUID {
-        let item = CanvasTextItem(
-            id: UUID(),
+        let itemID = appendTextItem(
             text: content,
             frame: CanvasGeometry.frameForText(content, centeredAt: point),
             wrapWidth: nil
         )
-
-        textItems.append(item)
-        updateFrameMemberships(for: [item.id])
-        setSelection([item.id])
-        pendingTextEditID = item.id
-        return item.id
+        setSelection([itemID])
+        pendingTextEditID = itemID
+        return itemID
     }
 
     @discardableResult
@@ -218,6 +206,72 @@ final class CanvasStore: ObservableObject {
 
     func removeSelectedNode() {
         deleteSelection()
+    }
+
+    func duplicateSelection() {
+        guard !selectedElementIDs.isEmpty else {
+            return
+        }
+
+        let selectedFrameIDs = Set(frameItems.lazy.filter { self.selectedElementIDs.contains($0.id) }.map(\.id))
+        let framedChildIDs = Set(selectedFrameIDs.flatMap { self.childIDs(forFrameID: $0) })
+        let standaloneContentIDs = frameableElementIDs(in: selectedElementIDs).subtracting(framedChildIDs)
+        var duplicatedIDs: Set<UUID> = []
+
+        for node in nodes where standaloneContentIDs.contains(node.id) {
+            let duplicatedID = appendTerminalNode(
+                title: node.title,
+                frame: node.frame.offsetBy(dx: duplicateOffset.x, dy: duplicateOffset.y)
+            )
+            duplicatedIDs.insert(duplicatedID)
+        }
+
+        for item in textItems where standaloneContentIDs.contains(item.id) {
+            let duplicatedID = appendTextItem(
+                text: item.text,
+                frame: item.frame.offsetBy(dx: duplicateOffset.x, dy: duplicateOffset.y),
+                wrapWidth: item.wrapWidth
+            )
+            duplicatedIDs.insert(duplicatedID)
+        }
+
+        for frameItem in frameItems where selectedFrameIDs.contains(frameItem.id) {
+            var duplicatedChildIDs: [UUID] = []
+
+            for childID in frameItem.childIDs {
+                if let node = nodes.first(where: { $0.id == childID }) {
+                    let duplicatedID = appendTerminalNode(
+                        title: node.title,
+                        frame: node.frame.offsetBy(dx: duplicateOffset.x, dy: duplicateOffset.y)
+                    )
+                    duplicatedChildIDs.append(duplicatedID)
+                    duplicatedIDs.insert(duplicatedID)
+                } else if let item = textItems.first(where: { $0.id == childID }) {
+                    let duplicatedID = appendTextItem(
+                        text: item.text,
+                        frame: item.frame.offsetBy(dx: duplicateOffset.x, dy: duplicateOffset.y),
+                        wrapWidth: item.wrapWidth
+                    )
+                    duplicatedChildIDs.append(duplicatedID)
+                    duplicatedIDs.insert(duplicatedID)
+                }
+            }
+
+            detachElementsFromFrames(Set(duplicatedChildIDs))
+            let duplicatedFrameID = appendFrameItem(
+                title: frameItem.title,
+                frame: frameItem.frame.offsetBy(dx: duplicateOffset.x, dy: duplicateOffset.y),
+                childIDs: duplicatedChildIDs
+            )
+            duplicatedIDs.insert(duplicatedFrameID)
+        }
+
+        guard !duplicatedIDs.isEmpty else {
+            return
+        }
+
+        setSelection(duplicatedIDs)
+        registerMinimapActivity()
     }
 
     func setTerminalBroadcastEnabled(_ enabled: Bool) {
@@ -284,7 +338,18 @@ final class CanvasStore: ObservableObject {
         setSelection(id.map { [$0] } ?? [])
     }
 
-    func activateElement(_ id: UUID) {
+    func activateElement(_ id: UUID, extendSelection: Bool = false) {
+        if extendSelection {
+            var nextSelection = selectedElementIDs
+            if nextSelection.contains(id) {
+                nextSelection.remove(id)
+            } else {
+                nextSelection.insert(id)
+            }
+            setSelection(nextSelection)
+            return
+        }
+
         if selectedElementIDs.contains(id) {
             bringSelectionToFront()
         } else {
@@ -301,6 +366,35 @@ final class CanvasStore: ObservableObject {
     func clearSelection() {
         selectedElementIDs.removeAll()
         normalizeTerminalBroadcastState()
+    }
+
+    func selectAllElements() {
+        let allIDs = Set(frameItems.map(\.id))
+            .union(nodes.map(\.id))
+            .union(textItems.map(\.id))
+        setSelection(allIDs)
+    }
+
+    func cycleSelection(backward: Bool = false) {
+        let orderedIDs = selectionCycleOrder
+        guard !orderedIDs.isEmpty else {
+            return
+        }
+
+        let orderedSelectedIDs = orderedIDs.filter { selectedElementIDs.contains($0) }
+        let nextID: UUID
+
+        if let anchorID = backward ? orderedSelectedIDs.first : orderedSelectedIDs.last,
+           let currentIndex = orderedIDs.firstIndex(of: anchorID)
+        {
+            let offset = backward ? -1 : 1
+            let nextIndex = (currentIndex + offset + orderedIDs.count) % orderedIDs.count
+            nextID = orderedIDs[nextIndex]
+        } else {
+            nextID = backward ? orderedIDs.last! : orderedIDs.first!
+        }
+
+        setSelection([nextID])
     }
 
     func selectElements(intersecting rect: CGRect, append: Bool = false) {
@@ -543,6 +637,31 @@ final class CanvasStore: ObservableObject {
         frameableElementIDs(in: selectedElementIDs)
     }
 
+    private var selectionCycleOrder: [UUID] {
+        struct CycleEntry {
+            let id: UUID
+            let frame: CGRect
+            let priority: Int
+        }
+
+        let entries =
+            nodes.map { CycleEntry(id: $0.id, frame: $0.frame, priority: 0) } +
+            textItems.map { CycleEntry(id: $0.id, frame: $0.frame, priority: 1) } +
+            frameItems.map { CycleEntry(id: $0.id, frame: $0.frame, priority: 2) }
+
+        return entries
+            .sorted { lhs, rhs in
+                if abs(lhs.frame.minX - rhs.frame.minX) > 0.001 {
+                    return lhs.frame.minX < rhs.frame.minX
+                }
+                if abs(lhs.frame.maxY - rhs.frame.maxY) > 0.001 {
+                    return lhs.frame.maxY > rhs.frame.maxY
+                }
+                return lhs.priority < rhs.priority
+            }
+            .map(\.id)
+    }
+
     private func normalizeTerminalBroadcastState() {
         guard !isTerminalBroadcastEnabled || !canBroadcastSelectedTerminals else {
             return
@@ -748,6 +867,42 @@ final class CanvasStore: ObservableObject {
         let selectedTextItems = textItems.filter { selectedElementIDs.contains($0.id) }
         textItems.removeAll { selectedElementIDs.contains($0.id) }
         textItems.append(contentsOf: selectedTextItems)
+    }
+
+    private func appendTerminalNode(title: String, frame: CGRect) -> UUID {
+        let node = TerminalNode(
+            id: UUID(),
+            title: title,
+            frame: frame
+        )
+        terminalCounter += 1
+        nodes.append(node)
+        updateFrameMemberships(for: [node.id])
+        return node.id
+    }
+
+    private func appendFrameItem(title: String, frame: CGRect, childIDs: [UUID]) -> UUID {
+        let frameItem = CanvasFrameItem(
+            id: UUID(),
+            title: title,
+            frame: frame,
+            childIDs: childIDs
+        )
+        frameCounter += 1
+        frameItems.append(frameItem)
+        return frameItem.id
+    }
+
+    private func appendTextItem(text: String, frame: CGRect, wrapWidth: CGFloat?) -> UUID {
+        let item = CanvasTextItem(
+            id: UUID(),
+            text: text,
+            frame: frame,
+            wrapWidth: wrapWidth
+        )
+        textItems.append(item)
+        updateFrameMemberships(for: [item.id])
+        return item.id
     }
 
     private func mutateNode(id: UUID, _ mutate: (inout TerminalNode) -> Void) {

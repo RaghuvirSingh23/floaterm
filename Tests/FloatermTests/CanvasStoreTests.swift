@@ -121,6 +121,83 @@ final class CanvasStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testShiftActivateTogglesElementSelectionMembership() {
+        let store = CanvasStore()
+        let firstID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let secondID = store.createTerminal(frame: CGRect(x: 360, y: 0, width: 320, height: 240))
+
+        store.setSelection([firstID])
+        store.activateElement(secondID, extendSelection: true)
+        XCTAssertEqual(store.selectedElementIDs, [firstID, secondID])
+
+        store.activateElement(firstID, extendSelection: true)
+        XCTAssertEqual(store.selectedElementIDs, [secondID])
+    }
+
+    @MainActor
+    func testSelectAllElementsIncludesFramesNodesAndText() {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let textID = store.createText(at: CGPoint(x: 420, y: 180), content: "note")
+        let frameID = store.createFrame(frame: CGRect(x: -20, y: -20, width: 520, height: 320), childIDs: [nodeID])
+
+        store.clearSelection()
+        store.selectAllElements()
+
+        XCTAssertEqual(store.selectedElementIDs, [nodeID, textID, frameID])
+    }
+
+    @MainActor
+    func testCycleSelectionAdvancesForwardAndBackward() {
+        let store = CanvasStore()
+        let firstID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let secondID = store.createTerminal(frame: CGRect(x: 360, y: 0, width: 320, height: 240))
+        let textID = store.createText(at: CGPoint(x: 720, y: 120), content: "note")
+
+        store.setSelection([firstID])
+        store.cycleSelection()
+        XCTAssertEqual(store.selectedElementIDs, [secondID])
+
+        store.cycleSelection()
+        XCTAssertEqual(store.selectedElementIDs, [textID])
+
+        store.cycleSelection(backward: true)
+        XCTAssertEqual(store.selectedElementIDs, [secondID])
+    }
+
+    @MainActor
+    func testDuplicateSelectionDuplicatesFrameChildrenOnlyOnce() throws {
+        let store = CanvasStore()
+        let nodeID = store.createTerminal(frame: CGRect(x: 100, y: 100, width: 320, height: 240))
+        store.renameNode(id: nodeID, title: "Build")
+        let textID = store.createText(at: CGPoint(x: 260, y: 180), content: "deploy")
+        let frameID = store.createFrame(frame: CGRect(x: 80, y: 80, width: 420, height: 320), childIDs: [nodeID, textID])
+        store.renameFrame(id: frameID, title: "Ops")
+
+        store.setSelection([frameID, nodeID])
+        store.duplicateSelection()
+
+        XCTAssertEqual(store.nodes.count, 2)
+        XCTAssertEqual(store.textItems.count, 2)
+        XCTAssertEqual(store.frameItems.count, 2)
+
+        let duplicatedFrame = try XCTUnwrap(store.frameItems.first(where: { $0.id != frameID }))
+        let duplicatedNode = try XCTUnwrap(store.nodes.first(where: { $0.id != nodeID }))
+        let duplicatedText = try XCTUnwrap(store.textItems.first(where: { $0.id != textID }))
+
+        XCTAssertEqual(duplicatedFrame.title, "Ops")
+        XCTAssertEqual(duplicatedNode.title, "Build")
+        XCTAssertEqual(duplicatedText.text, "deploy")
+        XCTAssertEqual(duplicatedFrame.childIDs.count, 2)
+        XCTAssertEqual(Set(duplicatedFrame.childIDs), [duplicatedNode.id, duplicatedText.id])
+        XCTAssertEqual(duplicatedNode.frame.origin.x, 148, accuracy: 0.0001)
+        XCTAssertEqual(duplicatedNode.frame.origin.y, 52, accuracy: 0.0001)
+        XCTAssertEqual(duplicatedFrame.frame.origin.x, 128, accuracy: 0.0001)
+        XCTAssertEqual(duplicatedFrame.frame.origin.y, 32, accuracy: 0.0001)
+        XCTAssertEqual(store.selectedElementIDs, [duplicatedFrame.id, duplicatedNode.id, duplicatedText.id])
+    }
+
+    @MainActor
     func testBroadcastTargetsOnlyOtherSelectedTerminals() {
         let store = CanvasStore()
         let firstID = store.createTerminal(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
